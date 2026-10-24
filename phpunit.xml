@@ -32,5 +32,12 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+
+        <!-- Owner seeder test credentials -->
+        <env name="OWNER_NAME" value="scar"/>
+        <env name="OWNER_EMAIL" value="scar@gmail.com"/>
+        <env name="OWNER_PASSWORD" value="scar123"/>
+        <env name="OWNER_PHONE" value="0653709810"/>
+
     </php>
 </phpunit>
