@@ -19,10 +19,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Force JSON for every API request, regardless of the client's
-        // Accept header. Keeps validation and auth errors in our envelope.
+        // Force JSON for every API request.
         $middleware->api(prepend: [
             \App\Http\Middleware\ForceJsonResponse::class,
+        ]);
+
+        // Named middleware aliases.
+        //   role:owner              → EnsureRole (role gate + status check)
+        //   branch.scope            → EnsureBranchScope (branch access control)
+        $middleware->alias([
+            'role'         => \App\Http\Middleware\EnsureRole::class,
+            'branch.scope' => \App\Http\Middleware\EnsureBranchScope::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
