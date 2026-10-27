@@ -26,6 +26,10 @@ Route::prefix('v1')->group(function () {
         Route::post('/login', [AuthController::class, 'login'])
             ->middleware('throttle:login');
 
+        
+        Route::post('/register/distributor', [AuthController::class, 'registerDistributor'])
+            ->middleware('throttle:register');
+
         Route::post('/refresh', [AuthController::class, 'refresh'])
             ->middleware('throttle:refresh');
 

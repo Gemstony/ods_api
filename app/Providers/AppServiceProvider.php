@@ -33,21 +33,32 @@ class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinute(5)
                 ->by($key)
-                ->response(fn () => response()->json([
+                ->response(fn() => response()->json([
                     'success' => false,
                     'message' => 'Too many login attempts. Please wait a minute and try again.',
-                    'errors'  => null,
+                    'errors' => null,
                 ], 429));
         });
 
         RateLimiter::for('refresh', function (Request $request) {
             return Limit::perMinute(20)
                 ->by($request->ip())
-                ->response(fn () => response()->json([
+                ->response(fn() => response()->json([
                     'success' => false,
                     'message' => 'Too many refresh attempts. Please slow down.',
-                    'errors'  => null,
+                    'errors' => null,
                 ], 429));
         });
+
+        RateLimiter::for('register', function (Request $request) {
+            return Limit::perMinute(3)
+                ->by($request->ip())
+                ->response(fn() => response()->json([
+                    'success' => false,
+                    'message' => 'Too many registration attempts. Please wait a minute and try again.',
+                    'errors' => null,
+                ], 429));
+        });
+        
     }
 }

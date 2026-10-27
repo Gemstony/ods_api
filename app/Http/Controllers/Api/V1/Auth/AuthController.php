@@ -16,6 +16,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Throwable;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Http\Requests\Api\V1\Auth\RegisterDistributorRequest;
+use App\Models\Role;
 
 /**
  * Authentication endpoints.
@@ -34,7 +36,8 @@ class AuthController extends Controller
 
     public function __construct(
         private readonly RefreshTokenService $refreshTokens,
-    ) {}
+    ) {
+    }
 
     // ─────────────────────────────────────────────────────────
     // LOGIN
@@ -47,17 +50,17 @@ class AuthController extends Controller
             ->first();
 
         // ─── Password check (generic failure message, no info leak) ─
-        if (! $user || ! Hash::check($request->password, $user->password)) {
+        if (!$user || !Hash::check($request->password, $user->password)) {
             return $this->error('Invalid email or password.', null, 401);
         }
 
         // ─── Status gate ─────────────────────────────────────────
-        if (! $user->isActive()) {
+        if (!$user->isActive()) {
             $message = match ($user->status) {
-                User::STATUS_PENDING     => 'Your account is pending approval. Please wait for the administrator.',
-                User::STATUS_SUSPENDED   => 'Your account has been suspended. Contact the administrator.',
+                User::STATUS_PENDING => 'Your account is pending approval. Please wait for the administrator.',
+                User::STATUS_SUSPENDED => 'Your account has been suspended. Contact the administrator.',
                 User::STATUS_DEACTIVATED => 'Your account has been deactivated.',
-                default                  => 'Your account is not active.',
+                default => 'Your account is not active.',
             };
             return $this->error($message, null, 403);
         }
@@ -76,11 +79,11 @@ class AuthController extends Controller
         );
 
         return $this->success([
-            'user'          => new UserResource($user),
-            'access_token'  => $accessToken,
+            'user' => new UserResource($user),
+            'access_token' => $accessToken,
             'refresh_token' => $refreshToken,
-            'token_type'    => 'bearer',
-            'expires_in'    => $this->accessTokenTtlSeconds(),
+            'token_type' => 'bearer',
+            'expires_in' => $this->accessTokenTtlSeconds(),
         ], 'Login successful.');
     }
 
@@ -92,13 +95,13 @@ class AuthController extends Controller
     {
         $stored = $this->refreshTokens->find($request->refresh_token);
 
-        if (! $stored || ! $stored->isUsable()) {
+        if (!$stored || !$stored->isUsable()) {
             return $this->error('Invalid or expired refresh token.', null, 401);
         }
 
         $user = $stored->user()->with('role.permissions')->first();
 
-        if (! $user || ! $user->isActive()) {
+        if (!$user || !$user->isActive()) {
             // Revoke the token even if the user is inactive — no point in
             // keeping it around for the next attempt.
             $this->refreshTokens->revoke($stored);
@@ -116,11 +119,11 @@ class AuthController extends Controller
         [, $newRefresh] = $this->refreshTokens->issue($user, $request);
 
         return $this->success([
-            'user'          => new UserResource($user),
-            'access_token'  => $accessToken,
+            'user' => new UserResource($user),
+            'access_token' => $accessToken,
             'refresh_token' => $newRefresh,
-            'token_type'    => 'bearer',
-            'expires_in'    => $this->accessTokenTtlSeconds(),
+            'token_type' => 'bearer',
+            'expires_in' => $this->accessTokenTtlSeconds(),
         ], 'Token refreshed.');
     }
 
@@ -150,7 +153,7 @@ class AuthController extends Controller
 
     public function logoutAll(Request $request): JsonResponse
     {
-        $user  = $request->user();
+        $user = $request->user();
         $count = $this->refreshTokens->revokeAllForUser($user);
 
         $this->invalidateCurrentAccessToken();
@@ -174,6 +177,61 @@ class AuthController extends Controller
     {
         $user = $request->user()->load('role.permissions', 'branch');
         return $this->success(new UserResource($user), 'OK');
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // REGISTER DISTRIBUTOR (self-registration, pending approval)
+    // ─────────────────────────────────────────────────────────
+
+    public function registerDistributor(
+        RegisterDistributorRequest $request,
+    ): JsonResponse {
+        $distributorRole = Role::where('name', Role::DISTRIBUTOR)->first();
+        if (!$distributorRole) {
+            // Seeder should have created this; if it didn't, the deployment
+            // is broken. Surface a server error rather than creating a user
+            // with no role.
+            return $this->error(
+                'Registration is temporarily unavailable. Please try again later.',
+                null,
+                500,
+            );
+        }
+
+        $user = User::create([
+            'role_id' => $distributorRole->id,
+            'name' => $request->input('name'),
+            'email' => $request->input('email'),
+            'phone' => $request->input('phone'),
+            'distributor_id' => $request->input('distributor_id'),
+            'password' => $request->input('password'), // auto-hashed via cast
+            'status' => User::STATUS_PENDING,
+        ]);
+
+        // Log the registration. Actor is null because the user doesn't have
+        // a token yet — this is a self-service public action.
+        AuditLog::record(
+            actor: null,
+            action: 'user.self_registered',
+            description: "Distributor self-registered: {$user->email}",
+            subject: $user,
+            changes: [
+                'role' => Role::DISTRIBUTOR,
+                'distributor_id' => $user->distributor_id,
+                'status' => $user->status,
+            ],
+            ipAddress: $request->ip(),
+            userAgent: $request->userAgent(),
+        );
+
+        $user->load('role.permissions');
+
+        return $this->success(
+            data: new UserResource($user),
+            message: 'Registration successful. Your account is pending approval. '
+            . 'You will be notified once an administrator approves it.',
+            status: 201,
+        );
     }
 
     // ─────────────────────────────────────────────────────────
