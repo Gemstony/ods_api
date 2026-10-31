@@ -4,6 +4,8 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\HealthController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Owner\BranchController;
+use App\Http\Controllers\Api\V1\Owner\BranchManagerController;
+use App\Http\Controllers\Api\V1\Owner\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -42,11 +44,27 @@ Route::prefix('v1')->group(function () {
         });
     });
 
+
+
     // ─── Owner (Phase 5) ──────────────────────────────────────
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
         ->group(function () {
             Route::apiResource('branches', BranchController::class)
                 ->only(['index', 'store', 'show', 'update']);
+
+            // ─── Branch manager assignment ────────────────────
+            Route::post('branches/{branch}/assign-manager', [BranchManagerController::class, 'assign']);
+            Route::delete('branches/{branch}/assign-manager', [BranchManagerController::class, 'unassign']);
+            Route::get('branches/{branch}/managers', [BranchManagerController::class, 'index']);
+
+            // ─── User management ──────────────────────────────
+            Route::get('users', [UserController::class, 'index']);
+            Route::post('users', [UserController::class, 'store']);
+            Route::get('users/{user}', [UserController::class, 'show']);
+            Route::put('users/{user}', [UserController::class, 'update']);
+            Route::post('users/{user}/approve', [UserController::class, 'approve']);
+            Route::patch('users/{user}/status', [UserController::class, 'updateStatus']);
+            Route::post('users/{user}/reset-password', [UserController::class, 'resetPassword']);
         });
 });

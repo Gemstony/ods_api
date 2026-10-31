@@ -6,13 +6,12 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * Transforms a User model into the JSON shape Flutter expects.
+ * Transforms a User model into the JSON shape the Flutter client expects.
  *
- * Role is flattened to a string (`$user->role->name` → `"role": "owner"`)
- * because Flutter's `Session` model stores it as `String role`.
- *
- * Role-specific fields (rider details) are conditionally included to keep
- * the Owner/Manager/Distributor responses small.
+ * - Flattens `role` to a string ("owner", "manager", …) to match the
+ *   `role` field on Flutter's `AuthUser`.
+ * - Includes `branch` as a nested object only when eager-loaded.
+ * - Rider-specific fields only shown for riders.
  */
 class UserResource extends JsonResource
 {
@@ -26,12 +25,18 @@ class UserResource extends JsonResource
             'role'               => $this->role?->name,
             'status'             => $this->status,
             'branch_id'          => $this->branch_id,
+            'branch'             => $this->whenLoaded('branch', function () {
+                return $this->branch ? [
+                    'id' => $this->branch->id,
+                    'name' => $this->branch->name,
+                    'code' => $this->branch->code,
+                ] : null;
+            }),
             'distributor_id'     => $this->distributor_id,
             'dispatcher_enabled' => (bool) $this->dispatcher_enabled,
             'email_verified_at'  => $this->email_verified_at?->toIso8601String(),
             'created_at'         => $this->created_at?->toIso8601String(),
 
-            // Permissions — handy for client-side feature gating.
             'permissions' => $this->whenLoaded(
                 'role',
                 fn () => $this->role->permissions->pluck('name')->values()->all(),
