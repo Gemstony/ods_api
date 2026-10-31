@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\HealthController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Owner\BranchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -26,7 +27,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/login', [AuthController::class, 'login'])
             ->middleware('throttle:login');
 
-        
+
         Route::post('/register/distributor', [AuthController::class, 'registerDistributor'])
             ->middleware('throttle:register');
 
@@ -35,9 +36,17 @@ Route::prefix('v1')->group(function () {
 
         // Protected — requires a valid access token
         Route::middleware('auth:api')->group(function () {
-            Route::post('/logout',     [AuthController::class, 'logout']);
+            Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/logout-all', [AuthController::class, 'logoutAll']);
-            Route::get('/me',          [AuthController::class, 'me']);
+            Route::get('/me', [AuthController::class, 'me']);
         });
     });
+
+    // ─── Owner (Phase 5) ──────────────────────────────────────
+    Route::middleware(['auth:api', 'role:owner'])
+        ->prefix('owner')
+        ->group(function () {
+            Route::apiResource('branches', BranchController::class)
+                ->only(['index', 'store', 'show', 'update']);
+        });
 });
