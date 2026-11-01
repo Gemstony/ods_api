@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Owner\UserController;
 use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
 use App\Http\Controllers\Api\V1\Owner\SettingsController;
 use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
+use App\Http\Controllers\Api\V1\Owner\DashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -47,15 +48,17 @@ Route::prefix('v1')->group(function () {
         });
     });
 
-        // ─── Public ───────────────────────────────────────────────
+    // ─── Public ───────────────────────────────────────────────
     Route::get('/settings/public', [PublicSettingsController::class, 'index'])
         ->middleware('throttle:60,1');
 
 
-       // ─── Owner (Phase 5) ──────────────────────────────────────
+    // ─── Owner (Phase 5) ──────────────────────────────────────
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
         ->group(function () {
+
+            Route::get('dashboard', [DashboardController::class, 'index']);
             // Branches
             Route::apiResource('branches', BranchController::class)
                 ->only(['index', 'store', 'show', 'update']);
