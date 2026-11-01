@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
 use App\Http\Controllers\Api\V1\Owner\SettingsController;
 use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
 use App\Http\Controllers\Api\V1\Owner\DashboardController;
+use App\Http\Controllers\Api\V1\Owner\FinanceController;
 
 /*
 |--------------------------------------------------------------------------
@@ -59,6 +60,8 @@ Route::prefix('v1')->group(function () {
         ->group(function () {
 
             Route::get('dashboard', [DashboardController::class, 'index']);
+            // Finance
+            Route::get('finance/summary', [FinanceController::class, 'summary']);
             // Branches
             Route::apiResource('branches', BranchController::class)
                 ->only(['index', 'store', 'show', 'update']);
