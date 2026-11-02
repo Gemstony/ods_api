@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\V1\Owner\FinanceController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
+use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -116,5 +118,8 @@ Route::prefix('v1')->group(function () {
             // Delivery oversight
             Route::get('deliveries', [ManagerDeliveryController::class, 'index']);
             Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
+
+            // Dashboard
+            Route::get('dashboard', [ManagerDashboardController::class, 'index']);
         });
 });
