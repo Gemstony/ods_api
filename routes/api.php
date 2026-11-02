@@ -11,6 +11,9 @@ use App\Http\Controllers\Api\V1\Owner\SettingsController;
 use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
 use App\Http\Controllers\Api\V1\Owner\DashboardController;
 use App\Http\Controllers\Api\V1\Owner\FinanceController;
+use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
+use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
+use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 
 /*
 |--------------------------------------------------------------------------
@@ -92,5 +95,26 @@ Route::prefix('v1')->group(function () {
             // Pricing config
             Route::get('pricing-config', [PricingConfigController::class, 'show']);
             Route::put('pricing-config', [PricingConfigController::class, 'update']);
+        });
+
+    // ─── Manager (Phase 6) ────────────────────────────────────
+    Route::middleware(['auth:api', 'role:manager'])
+        ->prefix('manager')
+        ->group(function () {
+            // Own branch
+            Route::get('branch', [ManagerBranchController::class, 'show']);
+            Route::put('branch', [ManagerBranchController::class, 'update']);
+
+            // Staff management
+            Route::get('staff', [ManagerStaffController::class, 'index']);
+            Route::post('staff', [ManagerStaffController::class, 'store']);
+            Route::get('staff/{user}', [ManagerStaffController::class, 'show']);
+            Route::put('staff/{user}', [ManagerStaffController::class, 'update']);
+            Route::patch('staff/{user}/status', [ManagerStaffController::class, 'updateStatus']);
+            Route::post('staff/{user}/reset-password', [ManagerStaffController::class, 'resetPassword']);
+
+            // Delivery oversight
+            Route::get('deliveries', [ManagerDeliveryController::class, 'index']);
+            Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
         });
 });
