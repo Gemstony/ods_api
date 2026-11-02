@@ -130,6 +130,26 @@ class ManagerDeliveryControllerTest extends TestCase
             ->assertJsonPath('data.tracking_id', 'ODS-SHOW-1');
     }
 
+    public function test_index_filters_by_multiple_statuses(): void
+    {
+        $branch = Branch::factory()->create();
+        $manager = $this->manager($branch);
+        $this->deliveryFor($branch, ['status' => Delivery::STATUS_PAID]);
+        $this->deliveryFor($branch, ['status' => Delivery::STATUS_PICKED_UP]);
+        $this->deliveryFor($branch, ['status' => Delivery::STATUS_DISPATCHED]);
+        $this->deliveryFor($branch, ['status' => Delivery::STATUS_DELIVERED]);
+
+        $response = $this->actingAs($manager, 'api')
+            ->getJson('/api/v1/manager/deliveries?status=paid,picked_up,dispatched');
+
+        $response->assertStatus(200);
+        $this->assertCount(3, $response->json('data.data'));
+        $this->assertNotContains(
+            'delivered',
+            array_column($response->json('data.data'), 'status'),
+        );
+    }
+
     public function test_show_returns_404_for_other_branch_delivery(): void
     {
         $own = Branch::factory()->create();

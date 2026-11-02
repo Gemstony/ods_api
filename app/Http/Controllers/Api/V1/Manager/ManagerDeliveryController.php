@@ -42,9 +42,14 @@ class ManagerDeliveryController extends Controller
             ->with(['items'])
             ->orderByDesc('created_at');
 
+        // Accept comma-separated statuses so the client can express
+        // groups like "in transit" (picked_up + dispatched) in a single
+        // round-trip. Single-status filters (`?status=paid`) still work.
         if ($request->filled('status')) {
-            $status = $request->query('status');
-            if (in_array($status, [
+            $raw = (string) $request->query('status');
+            $requested = array_filter(array_map('trim', explode(',', $raw)));
+
+            $validStatuses = [
                 Delivery::STATUS_PENDING_PAYMENT,
                 Delivery::STATUS_PAID,
                 Delivery::STATUS_BATCHED,
@@ -56,18 +61,23 @@ class ManagerDeliveryController extends Controller
                 Delivery::STATUS_CANCELLED,
                 Delivery::STATUS_FAILED,
                 Delivery::STATUS_EXPIRED,
-            ], true)) {
-                $query->where('status', $status);
+            ];
+
+            $filtered = array_values(array_intersect($requested, $validStatuses));
+            if (!empty($filtered)) {
+                $query->whereIn('status', $filtered);
             }
         }
-
+        
         if ($request->filled('service_type')) {
             $type = $request->query('service_type');
-            if (in_array($type, [
-                Delivery::SERVICE_RECEIVE,
-                Delivery::SERVICE_SEND,
-                Delivery::SERVICE_REGIONAL,
-            ], true)) {
+            if (
+                in_array($type, [
+                    Delivery::SERVICE_RECEIVE,
+                    Delivery::SERVICE_SEND,
+                    Delivery::SERVICE_REGIONAL,
+                ], true)
+            ) {
                 $query->where('service_type', $type);
             }
         }
@@ -109,7 +119,7 @@ class ManagerDeliveryController extends Controller
             ->where('id', $delivery)
             ->first();
 
-        if (! $model) {
+        if (!$model) {
             return $this->error('Delivery not found.', null, 404);
         }
 
