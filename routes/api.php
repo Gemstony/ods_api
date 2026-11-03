@@ -18,7 +18,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
 use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
-
+use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
 
 /*
 |--------------------------------------------------------------------------
@@ -144,5 +144,8 @@ Route::prefix('v1')->group(function () {
 
             // Dashboard
             Route::get('dashboard', [DistributorDashboardController::class, 'index']);
+
+            // Pickup branches
+            Route::get('branches', [DistributorBranchController::class, 'index']);
         });
 });
