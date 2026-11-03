@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
 use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
 use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
+use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -147,5 +149,13 @@ Route::prefix('v1')->group(function () {
 
             // Pickup branches
             Route::get('branches', [DistributorBranchController::class, 'index']);
+
         });
+
+            // ─── Distributor: rewards (top-level path, role-scoped) ───
+    // This lives OUTSIDE the `distributor` prefix on purpose — the
+    // rewards endpoint is at `/api/v1/rewards/me`, not
+    // `/api/v1/distributor/rewards/me`. Matches `ApiEndpoints.rewardsMe`.
+    Route::middleware(['auth:api', 'role:distributor'])
+        ->get('/rewards/me', [DistributorRewardsController::class, 'show']);
 });
