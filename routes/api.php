@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
+use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 
 
 /*
@@ -121,5 +122,8 @@ Route::prefix('v1')->group(function () {
 
             // Dashboard
             Route::get('dashboard', [ManagerDashboardController::class, 'index']);
+
+            // Packages at branch
+            Route::get('packages', [ManagerPackagesController::class, 'index']);
         });
 });
