@@ -17,7 +17,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
-
+use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
 
 
 /*
@@ -141,5 +141,8 @@ Route::prefix('v1')->group(function () {
             Route::get('deliveries', [DistributorDeliveryController::class, 'index']);
             Route::post('deliveries', [DistributorDeliveryController::class, 'store']);
             Route::get('deliveries/{delivery}', [DistributorDeliveryController::class, 'show']);
+
+            // Dashboard
+            Route::get('dashboard', [DistributorDashboardController::class, 'index']);
         });
 });
