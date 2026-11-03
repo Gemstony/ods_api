@@ -16,6 +16,8 @@ use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
+use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
+
 
 
 /*
@@ -125,5 +127,19 @@ Route::prefix('v1')->group(function () {
 
             // Packages at branch
             Route::get('packages', [ManagerPackagesController::class, 'index']);
+        });
+
+
+    // ─── Distributor (Phase 7) ────────────────────────────────
+    Route::middleware(['auth:api', 'role:distributor'])
+        ->prefix('distributor')
+        ->group(function () {
+            // Price preview must be registered BEFORE /{id} so Laravel
+            // doesn't try to match "price-preview" as an ID.
+            Route::post('deliveries/price-preview', [DistributorDeliveryController::class, 'pricePreview']);
+
+            Route::get('deliveries', [DistributorDeliveryController::class, 'index']);
+            Route::post('deliveries', [DistributorDeliveryController::class, 'store']);
+            Route::get('deliveries/{delivery}', [DistributorDeliveryController::class, 'show']);
         });
 });
