@@ -11,18 +11,16 @@ use App\Models\User;
  * Shapes a `Delivery` model into the JSON the Flutter client expects.
  *
  * Field names match `Delivery.fromJson` in `lib/data/models/delivery.dart`
- * exactly — no client-side adaptation needed. `items` is included only
- * when the relation is eager-loaded (`whenLoaded`), matching Flutter's
- * nullable `items` field.
+ * exactly — no client-side adaptation needed. `items` and
+ * `dispatcher_ticket` are included only when eager-loaded (`whenLoaded`).
  *
- * `available_actions` is additive (Phase 8.1) and lists the action keys
- * the *currently authenticated* rider may invoke on this delivery:
+ * `available_actions` (Phase 8.1) lists the action keys the currently
+ * authenticated rider may invoke:
  *   - assigned   → ['accept']
  *   - accepted   → ['pickup']
  *   - picked_up  → ['deliver']
  *   - otherwise  → []
- * It is empty for every non-rider caller, so distributor/manager/owner
- * responses are unchanged.
+ * Empty for every non-rider caller.
  */
 class DeliveryResource extends JsonResource
 {
@@ -110,21 +108,21 @@ class DeliveryResource extends JsonResource
                 return DeliveryItemResource::collection($this->items);
             }),
 
+            // Phase 9.1 — dispatched regional deliveries carry their ticket.
+            'dispatcher_ticket' => $this->whenLoaded('dispatcherTicket', function () {
+                return new DispatcherTicketResource($this->dispatcherTicket);
+            }),
+
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
             'deleted_at' => $this->deleted_at?->toIso8601String(),
         ];
 
-        // `hours_at_branch` is a virtual attribute set by
-        // ManagerPackagesController — null everywhere else. Only
-        // serialized when present, so every other endpoint's response
-        // is unchanged.
         if ($this->resource->getAttribute('hours_at_branch') !== null) {
             $base['hours_at_branch'] = (int) $this->resource->getAttribute('hours_at_branch');
         }
 
-        // `available_actions` (Phase 8.1) — populated only for the rider
-        // that the delivery is currently assigned to.
+        // Phase 8.1 — rider-only available_actions.
         $currentUser = auth()->user();
         $availableActions = [];
         if (

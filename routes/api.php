@@ -23,6 +23,8 @@ use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewa
 use App\Http\Controllers\Api\V1\Rider\RiderDashboardController;
 use App\Http\Controllers\Api\V1\Rider\RiderDeliveryController;
 use App\Http\Controllers\Api\V1\Rider\RiderEarningsController;
+use App\Http\Controllers\Api\V1\Receiver\ReceiverPackageController;
+use App\Http\Controllers\Api\V1\Receiver\RegionalDispatcherController;
 
 Route::prefix('v1')->group(function () {
 
@@ -129,12 +131,29 @@ Route::prefix('v1')->group(function () {
             Route::get('dashboard', [RiderDashboardController::class, 'index']);
             Route::get('earnings', [RiderEarningsController::class, 'index']);
 
-            // Deliveries — list/show first, then per-delivery actions.
             Route::get('deliveries', [RiderDeliveryController::class, 'index']);
             Route::get('deliveries/{delivery}', [RiderDeliveryController::class, 'show']);
 
             Route::post('deliveries/{delivery}/accept', [RiderDeliveryController::class, 'accept']);
             Route::post('deliveries/{delivery}/pickup', [RiderDeliveryController::class, 'pickup']);
             Route::post('deliveries/{delivery}/deliver', [RiderDeliveryController::class, 'deliver']);
+        });
+
+    // ─── Receiver (Phase 9) ───────────────────────────────────
+    Route::middleware(['auth:api', 'role:receiver'])
+        ->prefix('receiver')
+        ->group(function () {
+            // Packages (receive service, ready for rider handover)
+            Route::get('packages', [ReceiverPackageController::class, 'index']);
+            Route::get('packages/{delivery}', [ReceiverPackageController::class, 'show']);
+            Route::post('packages/{delivery}/verify', [ReceiverPackageController::class, 'verify']);
+            Route::post('packages/{delivery}/release', [ReceiverPackageController::class, 'release']);
+
+            // Regional dispatch (dispatcher_enabled gate)
+            Route::get('regional', [RegionalDispatcherController::class, 'index']);
+            Route::get('regional/{delivery}', [RegionalDispatcherController::class, 'show']);
+            Route::post('regional/{delivery}/assign', [RegionalDispatcherController::class, 'assign']);
+            Route::post('regional/{delivery}/dispatch', [RegionalDispatcherController::class, 'dispatch']);
+            Route::get('regional/{delivery}/ticket', [RegionalDispatcherController::class, 'ticket']);
         });
 });
