@@ -4,6 +4,8 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Models\Delivery;
+use App\Models\User;
 
 /**
  * Shapes a `Delivery` model into the JSON the Flutter client expects.
@@ -12,6 +14,15 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * exactly — no client-side adaptation needed. `items` is included only
  * when the relation is eager-loaded (`whenLoaded`), matching Flutter's
  * nullable `items` field.
+ *
+ * `available_actions` is additive (Phase 8.1) and lists the action keys
+ * the *currently authenticated* rider may invoke on this delivery:
+ *   - assigned   → ['accept']
+ *   - accepted   → ['pickup']
+ *   - picked_up  → ['deliver']
+ *   - otherwise  → []
+ * It is empty for every non-rider caller, so distributor/manager/owner
+ * responses are unchanged.
  */
 class DeliveryResource extends JsonResource
 {
@@ -112,7 +123,24 @@ class DeliveryResource extends JsonResource
             $base['hours_at_branch'] = (int) $this->resource->getAttribute('hours_at_branch');
         }
 
-        return $base;
+        // `available_actions` (Phase 8.1) — populated only for the rider
+        // that the delivery is currently assigned to.
+        $currentUser = auth()->user();
+        $availableActions = [];
+        if (
+            $currentUser instanceof User
+            && $currentUser->role?->name === 'rider'
+            && (int) $this->rider_id === (int) $currentUser->id
+        ) {
+            $availableActions = match ($this->status) {
+                Delivery::STATUS_ASSIGNED => ['accept'],
+                Delivery::STATUS_ACCEPTED => ['pickup'],
+                Delivery::STATUS_PICKED_UP => ['deliver'],
+                default => [],
+            };
+        }
+        $base['available_actions'] = $availableActions;
 
+        return $base;
     }
 }

@@ -20,17 +20,9 @@ use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDel
 use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
 use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
 use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
-
-
-/*
-|--------------------------------------------------------------------------
-| ODS API — v1
-|--------------------------------------------------------------------------
-|
-| All paths resolve to `/api/v1/...` (Laravel prepends `/api` via
-| install:api, and we add `/v1` here).
-|
-*/
+use App\Http\Controllers\Api\V1\Rider\RiderDashboardController;
+use App\Http\Controllers\Api\V1\Rider\RiderDeliveryController;
+use App\Http\Controllers\Api\V1\Rider\RiderEarningsController;
 
 Route::prefix('v1')->group(function () {
 
@@ -40,10 +32,8 @@ Route::prefix('v1')->group(function () {
     // ─── Authentication ───────────────────────────────────────
     Route::prefix('auth')->group(function () {
 
-        // Public — rate-limited by dedicated limiters
         Route::post('/login', [AuthController::class, 'login'])
             ->middleware('throttle:login');
-
 
         Route::post('/register/distributor', [AuthController::class, 'registerDistributor'])
             ->middleware('throttle:register');
@@ -51,7 +41,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/refresh', [AuthController::class, 'refresh'])
             ->middleware('throttle:refresh');
 
-        // Protected — requires a valid access token
         Route::middleware('auth:api')->group(function () {
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/logout-all', [AuthController::class, 'logoutAll']);
@@ -63,25 +52,21 @@ Route::prefix('v1')->group(function () {
     Route::get('/settings/public', [PublicSettingsController::class, 'index'])
         ->middleware('throttle:60,1');
 
-
     // ─── Owner (Phase 5) ──────────────────────────────────────
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
         ->group(function () {
 
             Route::get('dashboard', [DashboardController::class, 'index']);
-            // Finance
             Route::get('finance/summary', [FinanceController::class, 'summary']);
-            // Branches
+
             Route::apiResource('branches', BranchController::class)
                 ->only(['index', 'store', 'show', 'update']);
 
-            // Branch manager assignment
             Route::post('branches/{branch}/assign-manager', [BranchManagerController::class, 'assign']);
             Route::delete('branches/{branch}/assign-manager', [BranchManagerController::class, 'unassign']);
             Route::get('branches/{branch}/managers', [BranchManagerController::class, 'index']);
 
-            // Users
             Route::get('users', [UserController::class, 'index']);
             Route::post('users', [UserController::class, 'store']);
             Route::get('users/{user}', [UserController::class, 'show']);
@@ -90,8 +75,6 @@ Route::prefix('v1')->group(function () {
             Route::patch('users/{user}/status', [UserController::class, 'updateStatus']);
             Route::post('users/{user}/reset-password', [UserController::class, 'resetPassword']);
 
-            // Settings (bulk before key-based so `PUT /settings` doesn't
-            // get swallowed by the `{key}` route)
             Route::get('settings', [SettingsController::class, 'index']);
             Route::put('settings', [SettingsController::class, 'bulkUpdate']);
             Route::get('settings/{key}', [SettingsController::class, 'show'])
@@ -99,7 +82,6 @@ Route::prefix('v1')->group(function () {
             Route::put('settings/{key}', [SettingsController::class, 'update'])
                 ->where('key', '[A-Za-z0-9._-]+');
 
-            // Pricing config
             Route::get('pricing-config', [PricingConfigController::class, 'show']);
             Route::put('pricing-config', [PricingConfigController::class, 'update']);
         });
@@ -108,11 +90,9 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:api', 'role:manager'])
         ->prefix('manager')
         ->group(function () {
-            // Own branch
             Route::get('branch', [ManagerBranchController::class, 'show']);
             Route::put('branch', [ManagerBranchController::class, 'update']);
 
-            // Staff management
             Route::get('staff', [ManagerStaffController::class, 'index']);
             Route::post('staff', [ManagerStaffController::class, 'store']);
             Route::get('staff/{user}', [ManagerStaffController::class, 'show']);
@@ -120,42 +100,41 @@ Route::prefix('v1')->group(function () {
             Route::patch('staff/{user}/status', [ManagerStaffController::class, 'updateStatus']);
             Route::post('staff/{user}/reset-password', [ManagerStaffController::class, 'resetPassword']);
 
-            // Delivery oversight
             Route::get('deliveries', [ManagerDeliveryController::class, 'index']);
             Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
 
-            // Dashboard
             Route::get('dashboard', [ManagerDashboardController::class, 'index']);
-
-            // Packages at branch
             Route::get('packages', [ManagerPackagesController::class, 'index']);
         });
-
 
     // ─── Distributor (Phase 7) ────────────────────────────────
     Route::middleware(['auth:api', 'role:distributor'])
         ->prefix('distributor')
         ->group(function () {
-            // Price preview must be registered BEFORE /{id} so Laravel
-            // doesn't try to match "price-preview" as an ID.
             Route::post('deliveries/price-preview', [DistributorDeliveryController::class, 'pricePreview']);
-
             Route::get('deliveries', [DistributorDeliveryController::class, 'index']);
             Route::post('deliveries', [DistributorDeliveryController::class, 'store']);
             Route::get('deliveries/{delivery}', [DistributorDeliveryController::class, 'show']);
-
-            // Dashboard
             Route::get('dashboard', [DistributorDashboardController::class, 'index']);
-
-            // Pickup branches
             Route::get('branches', [DistributorBranchController::class, 'index']);
-
         });
 
-            // ─── Distributor: rewards (top-level path, role-scoped) ───
-    // This lives OUTSIDE the `distributor` prefix on purpose — the
-    // rewards endpoint is at `/api/v1/rewards/me`, not
-    // `/api/v1/distributor/rewards/me`. Matches `ApiEndpoints.rewardsMe`.
     Route::middleware(['auth:api', 'role:distributor'])
         ->get('/rewards/me', [DistributorRewardsController::class, 'show']);
+
+    // ─── Rider (Phase 8) ──────────────────────────────────────
+    Route::middleware(['auth:api', 'role:rider'])
+        ->prefix('rider')
+        ->group(function () {
+            Route::get('dashboard', [RiderDashboardController::class, 'index']);
+            Route::get('earnings', [RiderEarningsController::class, 'index']);
+
+            // Deliveries — list/show first, then per-delivery actions.
+            Route::get('deliveries', [RiderDeliveryController::class, 'index']);
+            Route::get('deliveries/{delivery}', [RiderDeliveryController::class, 'show']);
+
+            Route::post('deliveries/{delivery}/accept', [RiderDeliveryController::class, 'accept']);
+            Route::post('deliveries/{delivery}/pickup', [RiderDeliveryController::class, 'pickup']);
+            Route::post('deliveries/{delivery}/deliver', [RiderDeliveryController::class, 'deliver']);
+        });
 });
