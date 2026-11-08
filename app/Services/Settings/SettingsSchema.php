@@ -17,11 +17,6 @@ namespace App\Services\Settings;
  */
 class SettingsSchema
 {
-    /**
-     * Map of `key => Laravel validation rule string`.
-     *
-     * Keys are the exact strings used in the `settings` table.
-     */
     public const RULES = [
         // ─── Location ─────────────────────────────────────────
         'location.pickup_radius_km' =>
@@ -32,6 +27,12 @@ class SettingsSchema
             'required|integer|min:1|max:60',
 
         // ─── Batching ─────────────────────────────────────────
+        // batching.enabled                   kill switch (10.1+)
+        // batching.window_minutes            fixed window length (10.1)
+        // batching.early_closure_minutes     reserved (unused in fixed mode)
+        // batching.max_batch_size            reserved (unused in fixed mode)
+        'batching.enabled' =>
+            'required|boolean',
         'batching.window_minutes' =>
             'required|integer|min:1|max:120',
         'batching.early_closure_minutes' =>
@@ -86,26 +87,16 @@ class SettingsSchema
             'required|string|min:1|max:50',
     ];
 
-    /**
-     * Returns the validation rule string for a key, or null if the key
-     * isn't in the schema (i.e., isn't updatable via the API).
-     */
     public static function ruleFor(string $key): ?string
     {
         return self::RULES[$key] ?? null;
     }
 
-    /**
-     * True if this key is updatable via the API.
-     */
     public static function isKnown(string $key): bool
     {
         return isset(self::RULES[$key]);
     }
 
-    /**
-     * All known keys. Useful for tests and for filtering the response.
-     */
     public static function knownKeys(): array
     {
         return array_keys(self::RULES);

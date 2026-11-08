@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Owner\SettingsController;
 use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
 use App\Http\Controllers\Api\V1\Owner\DashboardController;
 use App\Http\Controllers\Api\V1\Owner\FinanceController;
+use App\Http\Controllers\Api\V1\Manager\ManagerBatchingController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
@@ -89,6 +90,9 @@ Route::prefix('v1')->group(function () {
             Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
             Route::get('dashboard', [ManagerDashboardController::class, 'index']);
             Route::get('packages', [ManagerPackagesController::class, 'index']);
+
+            // Batching (Phase 10.1)
+            Route::post('batching/run', [ManagerBatchingController::class, 'run']);
         });
 
     Route::middleware(['auth:api', 'role:distributor'])
@@ -120,13 +124,11 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:api', 'role:receiver'])
         ->prefix('receiver')
         ->group(function () {
-            // Packages (receive service, ready for rider handover)
             Route::get('packages', [ReceiverPackageController::class, 'index']);
             Route::get('packages/{delivery}', [ReceiverPackageController::class, 'show']);
             Route::post('packages/{delivery}/verify', [ReceiverPackageController::class, 'verify']);
             Route::post('packages/{delivery}/release', [ReceiverPackageController::class, 'release']);
 
-            // Regional dispatch (dispatcher_enabled gate)
             Route::get('regional', [RegionalDispatcherController::class, 'index']);
             Route::get('regional/{delivery}', [RegionalDispatcherController::class, 'show']);
             Route::post('regional/{delivery}/assign', [RegionalDispatcherController::class, 'assign']);

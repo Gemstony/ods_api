@@ -8,12 +8,8 @@ use Illuminate\Database\Seeder;
 /**
  * Seeds default settings across all ODS-configurable categories.
  *
- * Categories (matching the doc's "What must be configurable outside the
- * code?" list):
- *   location, batching, finance, payments, security, notifications, app
- *
- * Pricing and rewards are handled by PricingConfig (2.4) — not here.
- * Everything else lives in this key-value store.
+ * Categories: location, batching, finance, payments, security,
+ * notifications, app.
  *
  * All `app.*` settings are is_public=true so unauthenticated clients can
  * read them (e.g., for a minimum-supported-version gate).
@@ -30,10 +26,11 @@ class SettingsSeeder extends Seeder
             ['location.location_freshness_minutes',     10,    'location',      'Minutes before a rider\'s location is considered stale', false],
             ['location.assignment_timeout_minutes',     5,     'location',      'Minutes a rider has to accept an assignment', false],
 
-            // ─── Batching ─────────────────────────────────────────
-            ['batching.window_minutes',                 20,    'batching',      'Regional delivery batching window (minutes)', false],
-            ['batching.early_closure_minutes',          5,     'batching',      'Close a batching window early if no new orders arrive', false],
-            ['batching.max_batch_size',                 10,    'batching',      'Maximum deliveries per batch', false],
+            // ─── Batching (Phase 10.1 — fixed window) ─────────────
+            ['batching.enabled',                        true,  'batching',      'If false, scheduled batching runs are skipped entirely', false],
+            ['batching.window_minutes',                 10,    'batching',      'Fixed batching window (minutes); new batches close after this many minutes', false],
+            ['batching.early_closure_minutes',          5,     'batching',      'Reserved for future adaptive batching — unused in fixed-window mode', false],
+            ['batching.max_batch_size',                 10,    'batching',      'Reserved for future size-cap batching — unused in fixed-window mode', false],
 
             // ─── Finance ──────────────────────────────────────────
             ['finance.payout_schedule',                 'weekly', 'finance',    'Payout schedule: daily, weekly, biweekly, monthly', false],
