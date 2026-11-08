@@ -288,6 +288,96 @@ class RegionalDispatcherControllerTest extends TestCase
             ]]);
     }
 
+    // ─── confirmArrival (9.5) ─────────────────────────────────
+    public function test_confirm_arrival_transitions_dispatched_to_delivered(): void
+    {
+        $branch = $this->branch();
+        $receiver = $this->dispatcherReceiver($branch);
+        $delivery = $this->makeRegional($branch, Delivery::STATUS_DISPATCHED);
+        $delivery->update([
+            'dispatcher_id' => $receiver->id,
+            'dispatched_at' => now()->subHours(6),
+        ]);
+
+        $response = $this->actingAs($receiver, 'api')
+            ->postJson("/api/v1/receiver/regional/{$delivery->id}/confirm-arrival");
+
+        $response
+            ->assertStatus(200)
+            ->assertJsonPath('data.status', 'delivered');
+
+        $fresh = $delivery->fresh();
+        $this->assertSame('delivered', $fresh->status);
+        $this->assertNotNull($fresh->delivered_at);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'delivery.arrived_at_destination',
+            'actor_id' => $receiver->id,
+        ]);
+    }
+
+    public function test_confirm_arrival_422s_on_wrong_status(): void
+    {
+        $branch = $this->branch();
+        $receiver = $this->dispatcherReceiver($branch);
+        $delivery = $this->makeRegional($branch, Delivery::STATUS_ASSIGNED);
+        $delivery->update(['dispatcher_id' => $receiver->id]);
+
+        $this->actingAs($receiver, 'api')
+            ->postJson("/api/v1/receiver/regional/{$delivery->id}/confirm-arrival")
+            ->assertStatus(422)
+            ->assertJsonPath('errors.current_status', 'assigned')
+            ->assertJsonPath('errors.expected_status', 'dispatched');
+    }
+
+    public function test_confirm_arrival_404s_for_other_branch(): void
+    {
+        $branch = $this->branch();
+        $otherBranch = $this->branch();
+        $receiver = $this->dispatcherReceiver($branch);
+        $delivery = $this->makeRegional($otherBranch, Delivery::STATUS_DISPATCHED);
+
+        $this->actingAs($receiver, 'api')
+            ->postJson("/api/v1/receiver/regional/{$delivery->id}/confirm-arrival")
+            ->assertStatus(404);
+    }
+
+    public function test_confirm_arrival_requires_dispatcher_flag(): void
+    {
+        $branch = $this->branch();
+        $plainReceiver = User::factory()->role(Role::RECEIVER)->create([
+            'branch_id' => $branch->id,
+            'dispatcher_enabled' => false,
+        ]);
+        $delivery = $this->makeRegional($branch, Delivery::STATUS_DISPATCHED);
+
+        $this->actingAs($plainReceiver, 'api')
+            ->postJson("/api/v1/receiver/regional/{$delivery->id}/confirm-arrival")
+            ->assertStatus(403);
+    }
+
+    public function test_confirm_arrival_records_delivered_at_timestamp(): void
+    {
+        $branch = $this->branch();
+        $receiver = $this->dispatcherReceiver($branch);
+        $delivery = $this->makeRegional($branch, Delivery::STATUS_DISPATCHED);
+        $delivery->update([
+            'dispatcher_id' => $receiver->id,
+            'dispatched_at' => now()->subDays(2),
+        ]);
+
+        $this->actingAs($receiver, 'api')
+            ->postJson("/api/v1/receiver/regional/{$delivery->id}/confirm-arrival")
+            ->assertStatus(200);
+
+        $fresh = $delivery->fresh();
+        $this->assertNotNull($fresh->delivered_at);
+        // delivered_at should be essentially "now", not the dispatched_at
+        $this->assertTrue(
+            $fresh->delivered_at->isAfter($fresh->dispatched_at),
+            'delivered_at should be later than dispatched_at',
+        );
+    }
+
     // ─── ticket ───────────────────────────────────────────────
     public function test_ticket_returns_existing_ticket(): void
     {

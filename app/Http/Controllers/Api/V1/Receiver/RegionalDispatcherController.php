@@ -18,19 +18,21 @@ use Illuminate\Support\Facades\DB;
  * Regional dispatch endpoints for receivers with `dispatcher_enabled`.
  *
  * Status sequence (Decision B):
- *   batched --assign--> assigned --dispatch--> dispatched
+ *   batched --assign--> assigned --dispatch--> dispatched --confirm-arrival--> delivered
  *
  *   `assigned`    = dispatcher_id set; responsibility accepted
  *   `dispatched`  = physically handed to provider; ticket issued
- *
- * Both actions gate on `dispatcher_enabled` and branch scope.
+ *   `delivered`   = origin receiver has confirmed arrival at destination
+ *                   (recipient or provider has acknowledged receipt —
+ *                    see `confirmArrival` doc)
  *
  * Endpoints:
- *   GET  /receiver/regional                 → index
- *   GET  /receiver/regional/{delivery}      → show (includes ticket if any)
- *   POST /receiver/regional/{delivery}/assign    → batched → assigned
- *   POST /receiver/regional/{delivery}/dispatch  → assigned → dispatched
- *   GET  /receiver/regional/{delivery}/ticket    → view ticket
+ *   GET  /receiver/regional                       → index
+ *   GET  /receiver/regional/{delivery}            → show
+ *   POST /receiver/regional/{delivery}/assign     → batched → assigned
+ *   POST /receiver/regional/{delivery}/dispatch   → assigned → dispatched
+ *   POST /receiver/regional/{delivery}/confirm-arrival → dispatched → delivered
+ *   GET  /receiver/regional/{delivery}/ticket     → view ticket
  */
 class RegionalDispatcherController extends Controller
 {
@@ -216,6 +218,63 @@ class RegionalDispatcherController extends Controller
         return $this->success(new DeliveryResource($model), 'Regional delivery dispatched.');
     }
 
+    // ─── confirmArrival (9.5) ─────────────────────────────────
+    /**
+     * Transitions `dispatched → delivered`.
+     *
+     * The ORIGIN receiver (the one who dispatched) confirms arrival after
+     * the recipient or the bus/cargo provider has acknowledged receipt.
+     * This closes the loop from the origin branch's perspective — the
+     * package is no longer "in limbo" and the delivery is complete for
+     * reporting, compensation, and history purposes.
+     *
+     * No verification code yet — Phase 12 will add a recipient code gate
+     * to the physical handover. For 9.5 the origin receiver is trusted to
+     * only confirm after real-world confirmation (dialog warns them).
+     *
+     * `delivered_at` is stamped at this moment, not at physical handover.
+     * Audit log captures actor + timestamp so the timeline is recoverable
+     * even without a dedicated `confirmed_by` column.
+     */
+    public function confirmArrival(Request $request, int $delivery): JsonResponse
+    {
+        $gate = $this->gate($request);
+        if ($gate !== null) return $gate;
+
+        $model = $this->resolveRegional($request, $delivery);
+        if ($model instanceof JsonResponse) return $model;
+
+        if ($model->status !== Delivery::STATUS_DISPATCHED) {
+            return $this->error(
+                "Cannot confirm arrival: current status is '{$model->status}', expected 'dispatched'.",
+                [
+                    'current_status' => $model->status,
+                    'expected_status' => Delivery::STATUS_DISPATCHED,
+                ],
+                422,
+            );
+        }
+
+        $oldStatus = $model->status;
+        $model->status = Delivery::STATUS_DELIVERED;
+        $model->delivered_at = now();
+        $model->save();
+
+        $this->auditLogger->logCurrentUser(
+            action: 'delivery.arrived_at_destination',
+            description: "Confirmed arrival of regional delivery {$model->tracking_id} at destination.",
+            subject: $model,
+            changes: [
+                'status' => ['from' => $oldStatus, 'to' => Delivery::STATUS_DELIVERED],
+                'delivered_at' => $model->delivered_at->toIso8601String(),
+            ],
+        );
+
+        $model->load(['items', 'dispatcherTicket']);
+
+        return $this->success(new DeliveryResource($model), 'Arrival confirmed.');
+    }
+
     // ─── ticket ───────────────────────────────────────────────
     public function ticket(Request $request, int $delivery): JsonResponse
     {
@@ -235,9 +294,6 @@ class RegionalDispatcherController extends Controller
     }
 
     // ─── Helpers ──────────────────────────────────────────────
-    /**
-     * Returns null when the request may proceed, or a 403 JsonResponse.
-     */
     private function gate(Request $request): ?JsonResponse
     {
         $user = $request->user();
