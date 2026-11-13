@@ -98,6 +98,14 @@ class Payment extends Model
         return $this->hasMany(ClickPesaCallback::class);
     }
 
+    /**
+     * Raw HTTP call log for ClickPesa (Phase 11.1/11.4 — Owner ledger drill-down).
+     */
+    public function clickpesaApiLogs(): HasMany
+    {
+        return $this->hasMany(ClickPesaApiLog::class);
+    }
+
     // ─── State helpers ────────────────────────────────────────
     public function isCompleted(): bool
     {
@@ -117,6 +125,15 @@ class Payment extends Model
     public function isRefunded(): bool
     {
         return $this->status === self::STATUS_REFUNDED;
+    }
+
+    public function isTerminal(): bool
+    {
+        return in_array($this->status, [
+            self::STATUS_COMPLETED,
+            self::STATUS_CANCELLED,
+            self::STATUS_REFUNDED,
+        ], true);
     }
 
     // ─── Scopes ───────────────────────────────────────────────

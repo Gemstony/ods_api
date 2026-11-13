@@ -6,22 +6,26 @@ use App\Http\Controllers\Api\V1\Webhooks\ClickPesaWebhookController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Owner\BranchController;
 use App\Http\Controllers\Api\V1\Owner\BranchManagerController;
-use App\Http\Controllers\Api\V1\Owner\UserController;
-use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
-use App\Http\Controllers\Api\V1\Owner\SettingsController;
-use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
 use App\Http\Controllers\Api\V1\Owner\DashboardController;
+use App\Http\Controllers\Api\V1\Owner\EarningLedgerController;
 use App\Http\Controllers\Api\V1\Owner\FinanceController;
+use App\Http\Controllers\Api\V1\Owner\PaymentLedgerController;
+use App\Http\Controllers\Api\V1\Owner\PayoutLedgerController;
+use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
+use App\Http\Controllers\Api\V1\Owner\ReconciliationController;
+use App\Http\Controllers\Api\V1\Owner\SettingsController;
+use App\Http\Controllers\Api\V1\Owner\UserController;
+use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
 use App\Http\Controllers\Api\V1\Manager\ManagerAssignmentController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBatchingController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
-use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
-use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
+use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
-use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
-use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
+use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
 use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
+use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
+use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
 use App\Http\Controllers\Api\V1\Distributor\PaymentController as DistributorPaymentController;
 use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
 use App\Http\Controllers\Api\V1\Rider\RiderAvailabilityController;
@@ -35,7 +39,6 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/health', [HealthController::class, 'index']);
 
-    // ─── Webhooks (public, signature-verified) ────────────────
     Route::post('/webhooks/clickpesa', [ClickPesaWebhookController::class, 'receive'])
         ->middleware('throttle:60,1');
 
@@ -81,6 +84,18 @@ Route::prefix('v1')->group(function () {
                 ->where('key', '[A-Za-z0-9._-]+');
             Route::get('pricing-config', [PricingConfigController::class, 'show']);
             Route::put('pricing-config', [PricingConfigController::class, 'update']);
+
+            // ─── Ledger (Phase 11.4) ─────────────────────────
+            Route::get('payments', [PaymentLedgerController::class, 'index']);
+            Route::get('payments/{payment}', [PaymentLedgerController::class, 'show']);
+            Route::get('earnings', [EarningLedgerController::class, 'index']);
+            Route::get('earnings/{earning}', [EarningLedgerController::class, 'show']);
+            Route::get('payouts', [PayoutLedgerController::class, 'index']);
+            Route::get('payouts/{payout}', [PayoutLedgerController::class, 'show']);
+
+            // ─── Reconciliation (Phase 11.4) ─────────────────
+            Route::post('ledger/reconcile', [ReconciliationController::class, 'reconcile']);
+            Route::get('ledger/reconcile/last', [ReconciliationController::class, 'last']);
         });
 
     Route::middleware(['auth:api', 'role:manager'])
@@ -113,7 +128,6 @@ Route::prefix('v1')->group(function () {
             Route::get('dashboard', [DistributorDashboardController::class, 'index']);
             Route::get('branches', [DistributorBranchController::class, 'index']);
 
-            // Payments (Phase 11.2)
             Route::post('payments/initiate', [DistributorPaymentController::class, 'initiate']);
             Route::get('payments/{payment}', [DistributorPaymentController::class, 'show']);
             Route::post('payments/{payment}/refresh', [DistributorPaymentController::class, 'refresh']);

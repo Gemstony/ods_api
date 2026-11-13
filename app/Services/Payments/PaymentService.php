@@ -19,17 +19,10 @@ use Illuminate\Support\Str;
 /**
  * Orchestrator for delivery payments (Phase 11.2).
  *
- * Three public operations:
- *   - initiatePayment()    create Payment row + call ClickPesa USSD push
- *   - syncPayment()        actively poll ClickPesa and reconcile state
- *   - processWebhook()     handle a ClickPesa callback (post-signature-verification)
- *
- * All state transitions run inside DB transactions with row locks so
- * concurrent webhooks cannot corrupt state. Terminal states never regress.
- *
- * Idempotency: one non-terminal payment per (delivery, stage). A second
- * initiate for the same tuple throws a domain exception the controller
- * surfaces as 409; the Flutter client should call refresh instead.
+ * Public surface used by:
+ *   - Distributor\PaymentController::initiate / refresh
+ *   - Webhooks\ClickPesaWebhookController::receive
+ *   - Ledger\ReconciliationService::reconcile (Phase 11.4 — via applyStatus + recordTransaction)
  */
 class PaymentService
 {
@@ -42,11 +35,6 @@ class PaymentService
     // Initiate
     // ═════════════════════════════════════════════════════════
 
-    /**
-     * Create a Payment and push the USSD prompt via ClickPesa.
-     *
-     * @throws PaymentException when validation, duplicate, or ClickPesa fails
-     */
     public function initiatePayment(
         Delivery $delivery,
         User $initiator,
@@ -66,8 +54,6 @@ class PaymentService
             throw PaymentException::invalidAmount($stage);
         }
 
-        // Idempotency check + create inside one transaction with a
-        // lock on any existing non-terminal payment for this tuple.
         $payment = DB::transaction(function () use ($delivery, $initiator, $amount, $stage) {
             $existing = Payment::where('delivery_id', $delivery->id)
                 ->where('stage', $stage)
@@ -100,9 +86,6 @@ class PaymentService
             ]);
         });
 
-        // Call ClickPesa OUTSIDE the DB transaction — network I/O must
-        // not block a row lock. The pending Payment row is the durable
-        // record even if the call times out.
         $correlationId = (string) Str::uuid();
         try {
             $response = $this->client->initiateUssdPush(
@@ -187,22 +170,10 @@ class PaymentService
     // Sync (poll)
     // ═════════════════════════════════════════════════════════
 
-    /**
-     * Query ClickPesa for the current status and reconcile.
-     *
-     * Safe to call repeatedly. Returns the (possibly updated) Payment.
-     * If the provider says a terminal status we didn't know about,
-     * applies it and — if it makes the delivery fully paid — transitions
-     * the delivery to `paid`.
-     */
     public function syncPayment(Payment $payment): Payment
     {
-        if (in_array($payment->status, [
-            Payment::STATUS_COMPLETED,
-            Payment::STATUS_CANCELLED,
-            Payment::STATUS_REFUNDED,
-        ], true)) {
-            return $payment; // terminal, nothing to sync
+        if ($payment->isTerminal()) {
+            return $payment;
         }
 
         $correlationId = (string) Str::uuid();
@@ -214,8 +185,6 @@ class PaymentService
                 correlationId: $correlationId,
             );
         } catch (ClickPesaException $e) {
-            // Log but do NOT change state — a network blip on a poll
-            // must not fail an otherwise-live USSD push.
             Log::warning('ClickPesa sync failed', [
                 'payment_id' => $payment->id,
                 'error'      => $e->getMessage(),
@@ -243,13 +212,6 @@ class PaymentService
     // Webhook
     // ═════════════════════════════════════════════════════════
 
-    /**
-     * Process an already-verified webhook callback.
-     *
-     * The controller is responsible for signature verification and
-     * persisting the raw payload to clickpesa_callbacks BEFORE calling
-     * this method — so even if this method throws, we retain the event.
-     */
     public function processWebhook(ClickPesaCallback $callback): void
     {
         $payload = $callback->payload ?? [];
@@ -297,10 +259,16 @@ class PaymentService
     }
 
     // ═════════════════════════════════════════════════════════
-    // State machine core
+    // State machine (public for ReconciliationService — 11.4)
     // ═════════════════════════════════════════════════════════
 
-    private function applyStatus(Payment $payment, PaymentStatus $clickPesa, array $providerPayload): void
+    /**
+     * Apply a ClickPesa status to the local Payment, guarding against
+     * invalid transitions. Returns true if state actually changed.
+     *
+     * @return bool True = state changed, false = no-op or rejected by terminal guard
+     */
+    public function applyStatus(Payment $payment, PaymentStatus $clickPesa, array $providerPayload): bool
     {
         $newStatus = PaymentStatusMapper::toPaymentStatus($clickPesa);
         if ($newStatus === null) {
@@ -308,10 +276,12 @@ class PaymentService
                 'payment_id' => $payment->id,
                 'raw'        => $providerPayload,
             ]);
-            return;
+            return false;
         }
 
-        DB::transaction(function () use ($payment, $newStatus, $providerPayload) {
+        $changed = false;
+
+        DB::transaction(function () use ($payment, $newStatus, $providerPayload, &$changed) {
             /** @var Payment $locked */
             $locked = Payment::whereKey($payment->id)->lockForUpdate()->first();
             if (! PaymentStatusMapper::canTransition($locked->status, $newStatus)) {
@@ -328,6 +298,7 @@ class PaymentService
             }
 
             $locked->update($changes);
+            $changed = true;
 
             if ($newStatus === Payment::STATUS_COMPLETED) {
                 $this->auditLogger->log(
@@ -348,7 +319,39 @@ class PaymentService
                 );
             }
         });
+
+        return $changed;
     }
+
+    /**
+     * Append a PaymentTransaction row (public for ReconciliationService — 11.4).
+     */
+    public function recordTransaction(
+        Payment $payment,
+        string $type,
+        string $status,
+        ?array $request,
+        ?array $response,
+        ?string $error,
+    ): void {
+        PaymentTransaction::create([
+            'payment_id'         => $payment->id,
+            'type'               => $type,
+            'provider'           => 'clickpesa',
+            'provider_reference' => $payment->provider_reference,
+            'status'             => $status,
+            'request_payload'    => $request,
+            'response_payload'   => $response,
+            'error_message'      => $error,
+            'attempted_at'       => now(),
+            'ip_address'         => request()?->ip(),
+            'user_agent'         => request()?->userAgent(),
+        ]);
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // Internals
+    // ═════════════════════════════════════════════════════════
 
     private function markDeliveryPaidIfComplete(int $deliveryId): void
     {
@@ -375,10 +378,6 @@ class PaymentService
         });
     }
 
-    // ═════════════════════════════════════════════════════════
-    // Helpers
-    // ═════════════════════════════════════════════════════════
-
     private function amountForStage(Delivery $delivery, string $stage): float
     {
         return match ($stage) {
@@ -389,29 +388,6 @@ class PaymentService
             ),
             Payment::STAGE_TRANSPORT_FARE => (float) ($delivery->bus_cargo_fare ?? 0),
         };
-    }
-
-    private function recordTransaction(
-        Payment $payment,
-        string $type,
-        string $status,
-        ?array $request,
-        ?array $response,
-        ?string $error,
-    ): void {
-        PaymentTransaction::create([
-            'payment_id'         => $payment->id,
-            'type'               => $type,
-            'provider'           => 'clickpesa',
-            'provider_reference' => $payment->provider_reference,
-            'status'             => $status,
-            'request_payload'    => $request,
-            'response_payload'   => $response,
-            'error_message'      => $error,
-            'attempted_at'       => now(),
-            'ip_address'         => request()?->ip(),
-            'user_agent'         => request()?->userAgent(),
-        ]);
     }
 
     private function markCallbackFailed(ClickPesaCallback $callback, string $reason): void
