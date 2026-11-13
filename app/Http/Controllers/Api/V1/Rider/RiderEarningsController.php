@@ -23,7 +23,7 @@ use Illuminate\Http\Request;
  *     data:    [ { id, delivery_id, delivery_tracking_id, type, amount,
  *                  currency, status, earned_at, approved_at, paid_at,
  *                  notes, metadata, created_at, updated_at } ],
- *     summary: { owed_tsh, paid_this_month_tsh, paid_total_tsh },
+ *     summary: { pending_tsh, owed_tsh, paid_this_month_tsh, paid_total_tsh },
  *     total, per_page, current_page, last_page
  *   }
  *
@@ -121,6 +121,7 @@ class RiderEarningsController extends Controller
             data: [
                 'data' => $items,
                 'summary' => [
+                    'pending_tsh' => $owedTotal,
                     'owed_tsh' => $owedTotal,
                     'paid_this_month_tsh' => $paidThisMonth,
                     'paid_total_tsh' => $paidTotal,

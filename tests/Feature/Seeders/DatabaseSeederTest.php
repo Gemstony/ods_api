@@ -147,7 +147,7 @@ class DatabaseSeederTest extends TestCase
     // ─── Settings ──────────────────────────────────────────────
     public function test_default_settings_are_seeded(): void
     {
-        $this->assertSame(20, Setting::get('batching.window_minutes'));
+        $this->assertSame(10, Setting::get('batching.window_minutes'));
         $this->assertEquals(5.0, Setting::get('location.pickup_radius_km'));
         $this->assertSame(true, Setting::get('security.verification_required_delivery'));
         $this->assertSame(['clickpesa'], Setting::get('payments.enabled_methods'));

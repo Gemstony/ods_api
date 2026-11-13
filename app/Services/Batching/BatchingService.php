@@ -180,6 +180,7 @@ class BatchingService
 
             if ($key === null) {
                 $skipped++;
+
                 continue;
             }
 
@@ -202,6 +203,7 @@ class BatchingService
             if ($delivery->pickup_branch_id === null) {
                 return null;
             }
+
             return "{$delivery->service_type}:branch:{$delivery->pickup_branch_id}";
         }
 
@@ -214,6 +216,7 @@ class BatchingService
             }
             $lat = round((float) $delivery->destination_latitude, 1);
             $lng = round((float) $delivery->destination_longitude, 1);
+
             return "send:geo:{$lat}:{$lng}";
         }
 
@@ -255,6 +258,7 @@ class BatchingService
         if ($delivery->pickupBranch !== null) {
             return $delivery->pickupBranch->code;
         }
-        return 'B' . $delivery->pickup_branch_id;
+
+        return 'B'.$delivery->pickup_branch_id;
     }
 }

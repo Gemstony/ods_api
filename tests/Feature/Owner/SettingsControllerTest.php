@@ -102,7 +102,7 @@ class SettingsControllerTest extends TestCase
         $response
             ->assertStatus(200)
             ->assertJsonPath('data.key', 'batching.window_minutes')
-            ->assertJsonPath('data.value', 20)
+            ->assertJsonPath('data.value', 10)
             ->assertJsonPath('data.category', 'batching');
     }
 

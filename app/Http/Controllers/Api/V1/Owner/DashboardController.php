@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Delivery;
 use App\Models\DispatcherTicket;
+use App\Models\Dispute;
 use App\Models\Earning;
 use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
 use App\Traits\ApiResponse;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 
 /**
@@ -32,7 +34,7 @@ class DashboardController extends Controller
     public function index(): JsonResponse
     {
         $today = now()->startOfDay();
-        $startOfWeek = now()->startOfWeek();
+        $startOfWeek = now()->startOfWeek(Carbon::SUNDAY);
         $startOfMonth = now()->startOfMonth();
 
         // ─── Branches ─────────────────────────────────────────
@@ -94,7 +96,7 @@ class DashboardController extends Controller
             ->sum('transport_fare');
 
         // ─── Disputes ─────────────────────────────────────────
-        $openDisputes = \App\Models\Dispute::open()->count();
+        $openDisputes = Dispute::open()->count();
 
         return $this->success(
             data: [
