@@ -41,12 +41,12 @@ class ClickPesaClient
         private readonly int $tokenTtlMinutes,
         private readonly ClickPesaTokenProvider $tokenProvider,
     ) {
-        if ($clientId === '' || $clientSecret === '') {
-            throw new ClickPesaException(
-                'ClickPesa credentials are not configured. '
-                . 'Set CLICKPESA_CLIENT_ID and CLICKPESA_CLIENT_SECRET in .env.'
-            );
-        }
+        // NO credential check here — validated lazily in ensureFreshToken().
+        // Rationale: PaymentService (and anything else that injects this
+        // client) must be constructible without credentials so webhook
+        // processing, which never calls ClickPesa, works even when the
+        // integration is not yet configured. The first actual provider
+        // call is what requires credentials.
     }
 
     // ═════════════════════════════════════════════════════════
@@ -57,8 +57,24 @@ class ClickPesaClient
      * Ensure a valid token exists in the cache, calling the auth
      * endpoint if necessary. Returns the full "Bearer ..." string.
      */
+       /**
+     * Ensure a valid token exists in the cache, calling the auth
+     * endpoint if necessary. Returns the full "Bearer ..." string.
+     *
+     * Throws ClickPesaException if credentials are not configured —
+     * this is the first point where the integration actually needs
+     * them. Construction is not gated, so callers that never make a
+     * provider call (e.g. webhook processing) do not fail.
+     */
     public function ensureFreshToken(?string $correlationId = null): string
     {
+        if ($this->clientId === '' || $this->clientSecret === '') {
+            throw new ClickPesaException(
+                'ClickPesa credentials are not configured. '
+                . 'Set CLICKPESA_CLIENT_ID and CLICKPESA_CLIENT_SECRET in .env.'
+            );
+        }
+
         $cached = $this->tokenProvider->findValid();
         if ($cached !== null) {
             return $cached->access_token;

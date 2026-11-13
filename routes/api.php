@@ -1,37 +1,43 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\AuthController;
-use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
-use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
-use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
-use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
 use App\Http\Controllers\Api\V1\HealthController;
+use App\Http\Controllers\Api\V1\Webhooks\ClickPesaWebhookController;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Owner\BranchController;
+use App\Http\Controllers\Api\V1\Owner\BranchManagerController;
+use App\Http\Controllers\Api\V1\Owner\UserController;
+use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
+use App\Http\Controllers\Api\V1\Owner\SettingsController;
+use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
+use App\Http\Controllers\Api\V1\Owner\DashboardController;
+use App\Http\Controllers\Api\V1\Owner\FinanceController;
 use App\Http\Controllers\Api\V1\Manager\ManagerAssignmentController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBatchingController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
-use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
-use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
-use App\Http\Controllers\Api\V1\Owner\BranchController;
-use App\Http\Controllers\Api\V1\Owner\BranchManagerController;
-use App\Http\Controllers\Api\V1\Owner\DashboardController;
-use App\Http\Controllers\Api\V1\Owner\FinanceController;
-use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
-use App\Http\Controllers\Api\V1\Owner\SettingsController;
-use App\Http\Controllers\Api\V1\Owner\UserController;
-use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
-use App\Http\Controllers\Api\V1\Receiver\ReceiverPackageController;
-use App\Http\Controllers\Api\V1\Receiver\RegionalDispatcherController;
+use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
+use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
+use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
+use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
+use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
+use App\Http\Controllers\Api\V1\Distributor\PaymentController as DistributorPaymentController;
+use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
 use App\Http\Controllers\Api\V1\Rider\RiderAvailabilityController;
 use App\Http\Controllers\Api\V1\Rider\RiderDashboardController;
 use App\Http\Controllers\Api\V1\Rider\RiderDeliveryController;
 use App\Http\Controllers\Api\V1\Rider\RiderEarningsController;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Receiver\ReceiverPackageController;
+use App\Http\Controllers\Api\V1\Receiver\RegionalDispatcherController;
 
 Route::prefix('v1')->group(function () {
 
     Route::get('/health', [HealthController::class, 'index']);
+
+    // ─── Webhooks (public, signature-verified) ────────────────
+    Route::post('/webhooks/clickpesa', [ClickPesaWebhookController::class, 'receive'])
+        ->middleware('throttle:60,1');
 
     Route::prefix('auth')->group(function () {
         Route::post('/login', [AuthController::class, 'login'])
@@ -92,10 +98,9 @@ Route::prefix('v1')->group(function () {
             Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
             Route::get('dashboard', [ManagerDashboardController::class, 'index']);
             Route::get('packages', [ManagerPackagesController::class, 'index']);
-
-            // Phase 10.1 / 10.2 — orchestration triggers
             Route::post('batching/run', [ManagerBatchingController::class, 'run']);
             Route::post('assignment/run', [ManagerAssignmentController::class, 'run']);
+            Route::post('assignment/release-expired', [ManagerAssignmentController::class, 'releaseExpired']);
         });
 
     Route::middleware(['auth:api', 'role:distributor'])
@@ -107,6 +112,11 @@ Route::prefix('v1')->group(function () {
             Route::get('deliveries/{delivery}', [DistributorDeliveryController::class, 'show']);
             Route::get('dashboard', [DistributorDashboardController::class, 'index']);
             Route::get('branches', [DistributorBranchController::class, 'index']);
+
+            // Payments (Phase 11.2)
+            Route::post('payments/initiate', [DistributorPaymentController::class, 'initiate']);
+            Route::get('payments/{payment}', [DistributorPaymentController::class, 'show']);
+            Route::post('payments/{payment}/refresh', [DistributorPaymentController::class, 'refresh']);
         });
 
     Route::middleware(['auth:api', 'role:distributor'])
@@ -122,8 +132,6 @@ Route::prefix('v1')->group(function () {
             Route::post('deliveries/{delivery}/accept', [RiderDeliveryController::class, 'accept']);
             Route::post('deliveries/{delivery}/pickup', [RiderDeliveryController::class, 'pickup']);
             Route::post('deliveries/{delivery}/deliver', [RiderDeliveryController::class, 'deliver']);
-
-            // Phase 10.2 — queue availability
             Route::get('queue-status', [RiderAvailabilityController::class, 'show']);
             Route::patch('availability', [RiderAvailabilityController::class, 'update']);
         });

@@ -20,11 +20,11 @@ class ClickPesaClientTest extends TestCase
     {
         parent::setUp();
         config([
-            'clickpesa.base_url'        => 'https://sandbox.clickpesa.com',
-            'clickpesa.client_id'       => 'test-client',
-            'clickpesa.client_secret'   => 'test-secret',
-            'clickpesa.currency'        => 'TZS',
-            'clickpesa.timeout'         => 5,
+            'clickpesa.base_url' => 'https://sandbox.clickpesa.com',
+            'clickpesa.client_id' => 'test-client',
+            'clickpesa.client_secret' => 'test-secret',
+            'clickpesa.currency' => 'TZS',
+            'clickpesa.timeout' => 5,
             'clickpesa.connect_timeout' => 2,
             'clickpesa.token_ttl_minutes' => 55,
         ]);
@@ -48,14 +48,25 @@ class ClickPesaClientTest extends TestCase
     }
 
     // ─── Construction ───────────────────────────────────────
-    public function test_throws_when_credentials_missing(): void
+    public function test_construction_succeeds_without_credentials(): void
     {
         config(['clickpesa.client_id' => '', 'clickpesa.client_secret' => '']);
+
+        // Constructor must not throw — only the first provider call does.
+        $client = app(ClickPesaClient::class);
+        $this->assertInstanceOf(ClickPesaClient::class, $client);
+    }
+
+    public function test_ensure_fresh_token_throws_when_credentials_missing(): void
+    {
+        config(['clickpesa.client_id' => '', 'clickpesa.client_secret' => '']);
+
+        $client = app(ClickPesaClient::class);
 
         $this->expectException(ClickPesaException::class);
         $this->expectExceptionMessageMatches('/credentials are not configured/');
 
-        app(ClickPesaClient::class);
+        $client->ensureFreshToken();
     }
 
     // ─── Token generation + caching ─────────────────────────
@@ -68,7 +79,7 @@ class ClickPesaClientTest extends TestCase
         $this->assertSame('Bearer fresh-token', $token);
         $this->assertDatabaseHas('clickpesa_tokens', [
             'client_id_hash' => $this->hash(),
-            'access_token'   => 'Bearer fresh-token',
+            'access_token' => 'Bearer fresh-token',
         ]);
     }
 
@@ -91,8 +102,8 @@ class ClickPesaClientTest extends TestCase
     {
         ClickPesaToken::create([
             'client_id_hash' => $this->hash(),
-            'access_token'   => 'Bearer old',
-            'expires_at'     => now()->subMinute(),
+            'access_token' => 'Bearer old',
+            'expires_at' => now()->subMinute(),
         ]);
         $this->fakeAuth('Bearer new');
 
@@ -150,9 +161,9 @@ class ClickPesaClientTest extends TestCase
         Http::fake([
             '*/third-parties/generate-token' => Http::response(['token' => 'Bearer t'], 200),
             '*/third-parties/payments/initiate-ussd-push-request' => Http::response([
-                'id'             => 'CP-123',
+                'id' => 'CP-123',
                 'orderReference' => 'PAY-X',
-                'status'         => 'PENDING',
+                'status' => 'PENDING',
             ], 200),
         ]);
 
@@ -172,10 +183,10 @@ class ClickPesaClientTest extends TestCase
         Http::fake([
             '*/third-parties/generate-token' => Http::response(['token' => 'Bearer t'], 200),
             '*/third-parties/payments/PAY-X' => Http::response([
-                'status'   => 'SUCCESS',
-                'amount'   => '1000',
+                'status' => 'SUCCESS',
+                'amount' => '1000',
                 'currency' => 'TZS',
-                'id'       => 'CP-123',
+                'id' => 'CP-123',
             ], 200),
         ]);
 
@@ -205,7 +216,7 @@ class ClickPesaClientTest extends TestCase
             '*/third-parties/generate-token' => Http::response(['token' => 'Bearer t'], 200),
             '*/third-parties/payments/initiate-ussd-push-request' => Http::response([
                 'message' => 'Insufficient balance',
-                'code'    => 'INSUFFICIENT_FUNDS',
+                'code' => 'INSUFFICIENT_FUNDS',
             ], 422),
         ]);
 
@@ -229,8 +240,8 @@ class ClickPesaClientTest extends TestCase
         // Pre-seed a locally-valid but server-revoked token
         ClickPesaToken::create([
             'client_id_hash' => $this->hash(),
-            'access_token'   => 'Bearer revoked',
-            'expires_at'     => now()->addMinutes(30),
+            'access_token' => 'Bearer revoked',
+            'expires_at' => now()->addMinutes(30),
         ]);
 
         Http::fake([
