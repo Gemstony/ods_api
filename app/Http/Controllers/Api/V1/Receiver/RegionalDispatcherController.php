@@ -9,38 +9,28 @@ use App\Http\Resources\DispatcherTicketResource;
 use App\Models\Delivery;
 use App\Models\DispatcherTicket;
 use App\Services\Audit\AuditLogger;
+use App\Services\Compensation\CompensationService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Regional dispatch endpoints for receivers with `dispatcher_enabled`.
  *
- * Status sequence (Decision B):
+ * Status sequence:
  *   batched --assign--> assigned --dispatch--> dispatched --confirm-arrival--> delivered
- *
- *   `assigned`    = dispatcher_id set; responsibility accepted
- *   `dispatched`  = physically handed to provider; ticket issued
- *   `delivered`   = origin receiver has confirmed arrival at destination
- *                   (recipient or provider has acknowledged receipt —
- *                    see `confirmArrival` doc)
- *
- * Endpoints:
- *   GET  /receiver/regional                       → index
- *   GET  /receiver/regional/{delivery}            → show
- *   POST /receiver/regional/{delivery}/assign     → batched → assigned
- *   POST /receiver/regional/{delivery}/dispatch   → assigned → dispatched
- *   POST /receiver/regional/{delivery}/confirm-arrival → dispatched → delivered
- *   GET  /receiver/regional/{delivery}/ticket     → view ticket
  */
 class RegionalDispatcherController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly AuditLogger $auditLogger) {}
+    public function __construct(
+        private readonly AuditLogger $auditLogger,
+        private readonly CompensationService $compensation,
+    ) {}
 
-    // ─── index ────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
         $gate = $this->gate($request);
@@ -94,7 +84,6 @@ class RegionalDispatcherController extends Controller
         );
     }
 
-    // ─── show ─────────────────────────────────────────────────
     public function show(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolveRegional($request, $delivery);
@@ -103,7 +92,6 @@ class RegionalDispatcherController extends Controller
         return $this->success(new DeliveryResource($model), 'OK');
     }
 
-    // ─── assign ───────────────────────────────────────────────
     public function assign(Request $request, int $delivery): JsonResponse
     {
         $gate = $this->gate($request);
@@ -143,7 +131,6 @@ class RegionalDispatcherController extends Controller
         return $this->success(new DeliveryResource($model), 'Dispatcher assigned.');
     }
 
-    // ─── dispatch ─────────────────────────────────────────────
     public function dispatch(
         DispatchRegionalRequest $request,
         int $delivery,
@@ -218,24 +205,6 @@ class RegionalDispatcherController extends Controller
         return $this->success(new DeliveryResource($model), 'Regional delivery dispatched.');
     }
 
-    // ─── confirmArrival (9.5) ─────────────────────────────────
-    /**
-     * Transitions `dispatched → delivered`.
-     *
-     * The ORIGIN receiver (the one who dispatched) confirms arrival after
-     * the recipient or the bus/cargo provider has acknowledged receipt.
-     * This closes the loop from the origin branch's perspective — the
-     * package is no longer "in limbo" and the delivery is complete for
-     * reporting, compensation, and history purposes.
-     *
-     * No verification code yet — Phase 12 will add a recipient code gate
-     * to the physical handover. For 9.5 the origin receiver is trusted to
-     * only confirm after real-world confirmation (dialog warns them).
-     *
-     * `delivered_at` is stamped at this moment, not at physical handover.
-     * Audit log captures actor + timestamp so the timeline is recoverable
-     * even without a dedicated `confirmed_by` column.
-     */
     public function confirmArrival(Request $request, int $delivery): JsonResponse
     {
         $gate = $this->gate($request);
@@ -270,12 +239,23 @@ class RegionalDispatcherController extends Controller
             ],
         );
 
+        // Phase 11.3 — award dispatcher compensation. Best-effort:
+        // never roll back the confirmation; log and allow manual replay.
+        try {
+            $this->compensation->awardForDeliveredDelivery($model);
+        } catch (\Throwable $e) {
+            Log::error('Compensation failed after regional arrival confirmation', [
+                'delivery_id' => $model->id,
+                'tracking_id' => $model->tracking_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         $model->load(['items', 'dispatcherTicket']);
 
         return $this->success(new DeliveryResource($model), 'Arrival confirmed.');
     }
 
-    // ─── ticket ───────────────────────────────────────────────
     public function ticket(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolveRegional($request, $delivery);
@@ -293,7 +273,6 @@ class RegionalDispatcherController extends Controller
         );
     }
 
-    // ─── Helpers ──────────────────────────────────────────────
     private function gate(Request $request): ?JsonResponse
     {
         $user = $request->user();

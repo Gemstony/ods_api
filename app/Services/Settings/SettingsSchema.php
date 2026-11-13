@@ -4,16 +4,6 @@ namespace App\Services\Settings;
 
 /**
  * The authoritative schema for every updatable setting.
- *
- * Purpose:
- *   - The API uses this to validate incoming values before persisting.
- *   - Adding a new setting requires ONE change here (plus the seeder).
- *   - Unknown keys are rejected — no silent no-ops for typos.
- *
- * The schema mirrors the seeders from Phase 2.8. If a seeder adds a new
- * setting, add its rule here in the same commit.
- *
- * Values are Laravel validation rule strings applied to the `value` field.
  */
 class SettingsSchema
 {
@@ -27,10 +17,6 @@ class SettingsSchema
             'required|integer|min:1|max:60',
 
         // ─── Batching ─────────────────────────────────────────
-        // batching.enabled                   kill switch (10.1+)
-        // batching.window_minutes            fixed window length (10.1)
-        // batching.early_closure_minutes     reserved (unused in fixed mode)
-        // batching.max_batch_size            reserved (unused in fixed mode)
         'batching.enabled' =>
             'required|boolean',
         'batching.window_minutes' =>
@@ -39,6 +25,24 @@ class SettingsSchema
             'required|integer|min:0|max:60',
         'batching.max_batch_size' =>
             'required|integer|min:1|max:100',
+
+        // ─── Compensation (Phase 11.3) ───────────────────────
+        'compensation.enabled' =>
+            'required|boolean',
+        'compensation.rider_baseline_percent' =>
+            'required|numeric|min:0|max:100',
+        'compensation.rider_bonus_percent' =>
+            'required|numeric|min:0|max:100',
+        'compensation.rider_bonus_enabled' =>
+            'required|boolean',
+        'compensation.dispatcher_model' =>
+            'required|string|in:flat,percent,none',
+        'compensation.dispatcher_flat_amount_tsh' =>
+            'required|integer|min:0|max:100000',
+        'compensation.dispatcher_percent' =>
+            'required|numeric|min:0|max:100',
+        'compensation.require_approval' =>
+            'required|boolean',
 
         // ─── Finance ──────────────────────────────────────────
         'finance.payout_schedule' =>

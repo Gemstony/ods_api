@@ -6,38 +6,32 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\DeliveryResource;
 use App\Models\Delivery;
 use App\Services\Audit\AuditLogger;
+use App\Services\Compensation\CompensationService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Rider-facing delivery endpoints.
  *
  * Every action is scoped to `rider_id = auth.id` — a rider can never
- * see, accept, pickup, or deliver another rider's delivery. This is
- * enforced in the WHERE clause, not just the middleware, because a
- * route ID is not something the middleware can scope by.
+ * see, accept, pickup, or deliver another rider's delivery.
  *
- * State machine enforced:
+ * State machine:
  *   assigned   → accept    → accepted
  *   accepted   → pickup    → picked_up
- *   picked_up  → deliver   → delivered
- *
- * Any action against a delivery in the wrong state returns 422 with
- * a machine-readable `errors.current_status` / `errors.expected_status`
- * so the client can correct the UI.
- *
- * Verification-code gating (Phase 12) is intentionally NOT enforced
- * here — Phase 8.1 ships a plain status transition. When Phase 12
- * lands, the `deliver` method will additionally require a code.
+ *   picked_up  → deliver   → delivered     (frees rider + awards compensation)
  */
 class RiderDeliveryController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly AuditLogger $auditLogger) {}
+    public function __construct(
+        private readonly AuditLogger $auditLogger,
+        private readonly CompensationService $compensation,
+    ) {}
 
-    // ─── index ────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
         $riderId = $request->user()->id;
@@ -98,7 +92,6 @@ class RiderDeliveryController extends Controller
         );
     }
 
-    // ─── show ─────────────────────────────────────────────────
     public function show(Request $request, int $delivery): JsonResponse
     {
         $model = Delivery::with(['items'])
@@ -113,7 +106,6 @@ class RiderDeliveryController extends Controller
         return $this->success(new DeliveryResource($model), 'OK');
     }
 
-    // ─── accept ───────────────────────────────────────────────
     public function accept(Request $request, int $delivery): JsonResponse
     {
         return $this->transition(
@@ -127,7 +119,6 @@ class RiderDeliveryController extends Controller
         );
     }
 
-    // ─── pickup ───────────────────────────────────────────────
     public function pickup(Request $request, int $delivery): JsonResponse
     {
         return $this->transition(
@@ -141,7 +132,6 @@ class RiderDeliveryController extends Controller
         );
     }
 
-    // ─── deliver ──────────────────────────────────────────────
     public function deliver(Request $request, int $delivery): JsonResponse
     {
         return $this->transition(
@@ -152,10 +142,10 @@ class RiderDeliveryController extends Controller
             timestampField: 'delivered_at',
             auditAction: 'delivery.delivered',
             actionLabel: 'delivered',
+            markRiderAvailable: true,
         );
     }
 
-    // ─── Shared transition helper ─────────────────────────────
     private function transition(
         Request $request,
         int $deliveryId,
@@ -164,10 +154,10 @@ class RiderDeliveryController extends Controller
         string $timestampField,
         string $auditAction,
         string $actionLabel,
+        bool $markRiderAvailable = false,
     ): JsonResponse {
         $riderId = $request->user()->id;
 
-        // Scoped lookup: 404 for any delivery not owned by this rider.
         $delivery = Delivery::where('id', $deliveryId)
             ->where('rider_id', $riderId)
             ->first();
@@ -191,6 +181,23 @@ class RiderDeliveryController extends Controller
         $delivery->status = $newStatus;
         $delivery->{$timestampField} = now();
         $delivery->save();
+
+        if ($markRiderAvailable) {
+            $request->user()->markAvailable();
+
+            // Phase 11.3 — award earnings for the delivered delivery.
+            // Best-effort: never roll back delivery completion on
+            // compensation failure; log and allow manual replay.
+            try {
+                $this->compensation->awardForDeliveredDelivery($delivery);
+            } catch (\Throwable $e) {
+                Log::error('Compensation failed after delivery completion', [
+                    'delivery_id' => $delivery->id,
+                    'tracking_id' => $delivery->tracking_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         $this->auditLogger->logCurrentUser(
             action: $auditAction,

@@ -5,17 +5,6 @@ namespace Database\Seeders;
 use App\Models\Setting;
 use Illuminate\Database\Seeder;
 
-/**
- * Seeds default settings across all ODS-configurable categories.
- *
- * Categories: location, batching, finance, payments, security,
- * notifications, app.
- *
- * All `app.*` settings are is_public=true so unauthenticated clients can
- * read them (e.g., for a minimum-supported-version gate).
- *
- * Idempotent — uses Setting::set() which upserts by key.
- */
 class SettingsSeeder extends Seeder
 {
     public function run(): void
@@ -31,6 +20,16 @@ class SettingsSeeder extends Seeder
             ['batching.window_minutes',                 10,    'batching',      'Fixed batching window (minutes); new batches close after this many minutes', false],
             ['batching.early_closure_minutes',          5,     'batching',      'Reserved for future adaptive batching — unused in fixed-window mode', false],
             ['batching.max_batch_size',                 10,    'batching',      'Reserved for future size-cap batching — unused in fixed-window mode', false],
+
+            // ─── Compensation (Phase 11.3) ────────────────────────
+            ['compensation.enabled',                    true,  'compensation',  'Global kill-switch for auto-awarding earnings on delivery completion', false],
+            ['compensation.rider_baseline_percent',     80,    'compensation',  'Percent of ODS delivery fee paid to rider as baseline', false],
+            ['compensation.rider_bonus_percent',        10,    'compensation',  'Percent of ODS delivery fee paid to rider as multi-order bonus', false],
+            ['compensation.rider_bonus_enabled',        false, 'compensation',  'Enable multi-order bonus for local deliveries (requires batch size > 1)', false],
+            ['compensation.dispatcher_model',           'flat', 'compensation', 'Regional dispatcher compensation model: flat, percent, or none', false],
+            ['compensation.dispatcher_flat_amount_tsh', 2000,  'compensation',  'Flat amount (TZS) per dispatched regional delivery', false],
+            ['compensation.dispatcher_percent',         10,    'compensation',  'Percent of ODS delivery fee for dispatcher when model=percent', false],
+            ['compensation.require_approval',           true,  'compensation',  'Require Owner approval before earnings are paid out', false],
 
             // ─── Finance ──────────────────────────────────────────
             ['finance.payout_schedule',                 'weekly', 'finance',    'Payout schedule: daily, weekly, biweekly, monthly', false],
