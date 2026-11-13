@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Services\ClickPesa\ClickPesaClient;
+use App\Services\ClickPesa\ClickPesaTokenProvider;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -11,7 +13,25 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // ─── ClickPesa (Phase 11.1) ─────────────────────────
+        $this->app->singleton(ClickPesaTokenProvider::class, function ($app) {
+            return new ClickPesaTokenProvider(
+                clientId: (string) config('clickpesa.client_id'),
+            );
+        });
+
+        $this->app->singleton(ClickPesaClient::class, function ($app) {
+            return new ClickPesaClient(
+                baseUrl: (string) config('clickpesa.base_url'),
+                clientId: (string) config('clickpesa.client_id'),
+                clientSecret: (string) config('clickpesa.client_secret'),
+                defaultCurrency: (string) config('clickpesa.currency', 'TZS'),
+                timeout: (int) config('clickpesa.timeout', 30),
+                connectTimeout: (int) config('clickpesa.connect_timeout', 10),
+                tokenTtlMinutes: (int) config('clickpesa.token_ttl_minutes', 55),
+                tokenProvider: $app->make(ClickPesaTokenProvider::class),
+            );
+        });
     }
 
     public function boot(): void
@@ -19,13 +39,6 @@ class AppServiceProvider extends ServiceProvider
         $this->registerRateLimiters();
     }
 
-    /**
-     * Named rate limiters used by `throttle:` middleware on the auth routes.
-     *
-     * Both return the ODS JSON envelope on 429 (instead of Laravel's
-     * default empty-body response), so Flutter's error interceptor can
-     * surface a user-friendly message.
-     */
     protected function registerRateLimiters(): void
     {
         RateLimiter::for('login', function (Request $request) {
@@ -59,6 +72,5 @@ class AppServiceProvider extends ServiceProvider
                     'errors' => null,
                 ], 429));
         });
-        
     }
 }
