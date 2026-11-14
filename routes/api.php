@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDa
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
 use App\Http\Controllers\Api\V1\Distributor\PaymentController as DistributorPaymentController;
 use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
+use App\Http\Controllers\Api\V1\Distributor\VerificationController as DistributorVerificationController;
 use App\Http\Controllers\Api\V1\Rider\RiderAvailabilityController;
 use App\Http\Controllers\Api\V1\Rider\RiderDashboardController;
 use App\Http\Controllers\Api\V1\Rider\RiderDeliveryController;
@@ -85,7 +86,6 @@ Route::prefix('v1')->group(function () {
             Route::get('pricing-config', [PricingConfigController::class, 'show']);
             Route::put('pricing-config', [PricingConfigController::class, 'update']);
 
-            // ─── Ledger (Phase 11.4) ─────────────────────────
             Route::get('payments', [PaymentLedgerController::class, 'index']);
             Route::get('payments/{payment}', [PaymentLedgerController::class, 'show']);
             Route::get('earnings', [EarningLedgerController::class, 'index']);
@@ -93,7 +93,6 @@ Route::prefix('v1')->group(function () {
             Route::get('payouts', [PayoutLedgerController::class, 'index']);
             Route::get('payouts/{payout}', [PayoutLedgerController::class, 'show']);
 
-            // ─── Reconciliation (Phase 11.4) ─────────────────
             Route::post('ledger/reconcile', [ReconciliationController::class, 'reconcile']);
             Route::get('ledger/reconcile/last', [ReconciliationController::class, 'last']);
         });
@@ -131,6 +130,12 @@ Route::prefix('v1')->group(function () {
             Route::post('payments/initiate', [DistributorPaymentController::class, 'initiate']);
             Route::get('payments/{payment}', [DistributorPaymentController::class, 'show']);
             Route::post('payments/{payment}/refresh', [DistributorPaymentController::class, 'refresh']);
+
+            // Phase 12.2 — issue verification codes for a delivery.
+            Route::post(
+                'deliveries/{delivery}/verification/issue',
+                [DistributorVerificationController::class, 'issue'],
+            )->middleware('throttle:10,1');
         });
 
     Route::middleware(['auth:api', 'role:distributor'])

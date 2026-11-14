@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1\Rider;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\DeliveryResource;
 use App\Models\Delivery;
+use App\Models\VerificationCode;
 use App\Services\Audit\AuditLogger;
 use App\Services\Compensation\CompensationService;
+use App\Services\Verification\VerificationCodeService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,13 +17,10 @@ use Illuminate\Support\Facades\Log;
 /**
  * Rider-facing delivery endpoints.
  *
- * Every action is scoped to `rider_id = auth.id` — a rider can never
- * see, accept, pickup, or deliver another rider's delivery.
- *
- * State machine:
- *   assigned   → accept    → accepted
- *   accepted   → pickup    → picked_up
- *   picked_up  → deliver   → delivered     (frees rider + awards compensation)
+ * Phase 12.2: `pickup` and `deliver` accept an optional `verification_code`.
+ * The gate arms only when `isRequired()` is true (setting on + code issued).
+ * On any verification failure, returns 422 with a machine-readable
+ * `outcome` and `remaining_attempts`.
  */
 class RiderDeliveryController extends Controller
 {
@@ -30,6 +29,7 @@ class RiderDeliveryController extends Controller
     public function __construct(
         private readonly AuditLogger $auditLogger,
         private readonly CompensationService $compensation,
+        private readonly VerificationCodeService $verification,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -129,6 +129,7 @@ class RiderDeliveryController extends Controller
             timestampField: 'picked_up_at',
             auditAction: 'delivery.picked_up',
             actionLabel: 'picked up',
+            requiresCodeType: VerificationCode::TYPE_DISTRIBUTOR,
         );
     }
 
@@ -143,6 +144,7 @@ class RiderDeliveryController extends Controller
             auditAction: 'delivery.delivered',
             actionLabel: 'delivered',
             markRiderAvailable: true,
+            requiresCodeType: VerificationCode::TYPE_RECIPIENT,
         );
     }
 
@@ -155,6 +157,7 @@ class RiderDeliveryController extends Controller
         string $auditAction,
         string $actionLabel,
         bool $markRiderAvailable = false,
+        ?string $requiresCodeType = null,
     ): JsonResponse {
         $riderId = $request->user()->id;
 
@@ -177,6 +180,19 @@ class RiderDeliveryController extends Controller
             );
         }
 
+        // Phase 12.2 — verification gate.
+        if ($requiresCodeType !== null && $this->verification->isRequired($requiresCodeType, $delivery)) {
+            $verificationError = $this->verifyCode(
+                request: $request,
+                delivery: $delivery,
+                codeType: $requiresCodeType,
+                actionLabel: $actionLabel,
+            );
+            if ($verificationError !== null) {
+                return $verificationError;
+            }
+        }
+
         $oldStatus = $delivery->status;
         $delivery->status = $newStatus;
         $delivery->{$timestampField} = now();
@@ -185,9 +201,6 @@ class RiderDeliveryController extends Controller
         if ($markRiderAvailable) {
             $request->user()->markAvailable();
 
-            // Phase 11.3 — award earnings for the delivered delivery.
-            // Best-effort: never roll back delivery completion on
-            // compensation failure; log and allow manual replay.
             try {
                 $this->compensation->awardForDeliveredDelivery($delivery);
             } catch (\Throwable $e) {
@@ -211,5 +224,49 @@ class RiderDeliveryController extends Controller
         $delivery->load(['items']);
 
         return $this->success(new DeliveryResource($delivery), 'OK');
+    }
+
+    /**
+     * Phase 12.2 helper — inline verification attempt for one transition.
+     * Returns `null` if verification passed; a 422 JsonResponse otherwise.
+     */
+    private function verifyCode(
+        Request $request,
+        Delivery $delivery,
+        string $codeType,
+        string $actionLabel,
+    ): ?JsonResponse {
+        $rawCode = (string) $request->input('verification_code', '');
+
+        if ($rawCode === '') {
+            return $this->error(
+                "A verification code is required to {$actionLabel} this delivery.",
+                [
+                    'outcome'          => 'no_code_provided',
+                    'code_type'        => $codeType,
+                    'remaining_attempts' => $this->verification->maxAttempts(),
+                ],
+                422,
+            );
+        }
+
+        $result = $this->verification->verify(
+            $delivery,
+            $codeType,
+            $rawCode,
+            $request->user(),
+        );
+
+        if (! $result->isSuccess()) {
+            return $this->error(
+                $result->outcome->message(),
+                array_merge($result->toArray(), [
+                    'code_type' => $codeType,
+                ]),
+                422,
+            );
+        }
+
+        return null;
     }
 }

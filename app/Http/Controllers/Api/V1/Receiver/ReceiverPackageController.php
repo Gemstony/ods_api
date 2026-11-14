@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1\Receiver;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\DeliveryResource;
 use App\Models\Delivery;
+use App\Models\VerificationCode;
 use App\Services\Audit\AuditLogger;
+use App\Services\Verification\VerificationCodeService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,32 +15,18 @@ use Illuminate\Http\Request;
 /**
  * Receiver-facing package handover endpoints.
  *
- * Scope: `receive` deliveries at the receiver's branch. Send never
- * passes through a branch; Regional is handled by the RegionalDispatcher
- * controller (Phase 9.1 second half).
- *
- * Endpoints:
- *   GET  /receiver/packages                  → index (branch-scoped)
- *   GET  /receiver/packages/{delivery}       → show
- *   POST /receiver/packages/{delivery}/verify → verify (readiness check)
- *   POST /receiver/packages/{delivery}/release → release (accepted → picked_up)
- *
- * Handover contract (Decision A):
- *   - Receiver release AND rider pickup both transition accepted → picked_up.
- *   - First to arrive wins. The second sees `accepted ≠ current` and 422s.
- *   - Audit logs record the actor distinctly:
- *       delivery.released_by_receiver  (this controller)
- *       delivery.picked_up             (RiderDeliveryController, 8.1)
- *
- * Phase 12 will add a verification code gate inside `evaluateRelease`.
+ * Phase 12.2: `release` accepts an optional `verification_code`
+ * (DISTRIBUTOR_CODE). Gate arms when `isRequired()` is true.
  */
 class ReceiverPackageController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly AuditLogger $auditLogger) {}
+    public function __construct(
+        private readonly AuditLogger $auditLogger,
+        private readonly VerificationCodeService $verification,
+    ) {}
 
-    // ─── index ────────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
         $branchId = $this->branchId($request);
@@ -99,7 +87,6 @@ class ReceiverPackageController extends Controller
         );
     }
 
-    // ─── show ─────────────────────────────────────────────────
     public function show(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
@@ -108,7 +95,6 @@ class ReceiverPackageController extends Controller
         return $this->success(new DeliveryResource($model), 'OK');
     }
 
-    // ─── verify ───────────────────────────────────────────────
     public function verify(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
@@ -131,7 +117,6 @@ class ReceiverPackageController extends Controller
         );
     }
 
-    // ─── release ──────────────────────────────────────────────
     public function release(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
@@ -144,6 +129,39 @@ class ReceiverPackageController extends Controller
                 ['current_status' => $model->status],
                 422,
             );
+        }
+
+        // Phase 12.2 — verification gate.
+        if ($this->verification->isRequired(VerificationCode::TYPE_DISTRIBUTOR, $model)) {
+            $rawCode = (string) $request->input('verification_code', '');
+            if ($rawCode === '') {
+                return $this->error(
+                    'A verification code is required to release this package.',
+                    [
+                        'outcome'            => 'no_code_provided',
+                        'code_type'          => VerificationCode::TYPE_DISTRIBUTOR,
+                        'remaining_attempts' => $this->verification->maxAttempts(),
+                    ],
+                    422,
+                );
+            }
+
+            $result = $this->verification->verify(
+                $model,
+                VerificationCode::TYPE_DISTRIBUTOR,
+                $rawCode,
+                $request->user(),
+            );
+
+            if (! $result->isSuccess()) {
+                return $this->error(
+                    $result->outcome->message(),
+                    array_merge($result->toArray(), [
+                        'code_type' => VerificationCode::TYPE_DISTRIBUTOR,
+                    ]),
+                    422,
+                );
+            }
         }
 
         $oldStatus = $model->status;
@@ -169,7 +187,6 @@ class ReceiverPackageController extends Controller
         );
     }
 
-    // ─── Helpers ──────────────────────────────────────────────
     private function branchId(Request $request): int|JsonResponse
     {
         $id = $request->user()->branch_id;
@@ -200,12 +217,7 @@ class ReceiverPackageController extends Controller
         return $model;
     }
 
-    /**
-     * Gate for `release`. Phase 12 will insert a code-match check here;
-     * for 9.1, readiness = correct status + rider assigned.
-     *
-     * @return array{0: bool, 1: string|null}
-     */
+    /** @return array{0: bool, 1: string|null} */
     private function evaluateRelease(Delivery $delivery): array
     {
         if ($delivery->status !== Delivery::STATUS_ACCEPTED) {
