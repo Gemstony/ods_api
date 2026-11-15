@@ -32,7 +32,11 @@ use Illuminate\Support\Facades\DB;
  */
 class AssignmentService
 {
-    public function __construct(private readonly AuditLogger $auditLogger) {}
+    public function __construct(
+        private readonly AuditLogger $auditLogger,
+        private readonly \App\Services\Notifications\NotificationService $notifications,
+    ) {
+    }
 
     /**
      * @param  int|null  $branchId  Limit to one branch (Manager button).
@@ -81,15 +85,11 @@ class AssignmentService
                 continue;
             }
 
-            [$batchMade, $batchUnassigned] = DB::transaction(function () use (
-                $bId,
-                $branchDeliveries,
-                $timeoutMinutes,
-            ) {
+            [$batchMade, $batchUnassigned] = DB::transaction(function () use ($bId, $branchDeliveries, $timeoutMinutes, ) {
                 /** @var Collection<int,User> $riders */
                 $riders = User::query()
                     ->where('branch_id', $bId)
-                    ->whereHas('role', fn ($q) => $q->where('name', Role::RIDER))
+                    ->whereHas('role', fn($q) => $q->where('name', Role::RIDER))
                     ->where('status', User::STATUS_ACTIVE)
                     ->where('is_available', true)
                     ->orderBy('available_since')
@@ -120,6 +120,15 @@ class AssignmentService
 
                     $rider->markBusy();
 
+                    try {
+                        $this->notifications->deliveryAssigned($delivery->fresh());
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error(
+                            'Notification write after assignment failed',
+                            ['delivery_id' => $delivery->id, 'error' => $e->getMessage()],
+                        );
+                    }
+
                     $made[] = [
                         'delivery_id' => $delivery->id,
                         'rider_id' => $rider->id,
@@ -139,7 +148,7 @@ class AssignmentService
             $unassigned += $batchUnassigned;
         }
 
-        if (! empty($made)) {
+        if (!empty($made)) {
             $this->auditLogger->log(
                 auth()->user(),
                 action: 'assignment.run_completed',

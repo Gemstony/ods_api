@@ -29,12 +29,15 @@ class RegionalDispatcherController extends Controller
     public function __construct(
         private readonly AuditLogger $auditLogger,
         private readonly CompensationService $compensation,
-    ) {}
+        private readonly \App\Services\Notifications\NotificationService $notifications,
+    ) {
+    }
 
     public function index(Request $request): JsonResponse
     {
         $gate = $this->gate($request);
-        if ($gate !== null) return $gate;
+        if ($gate !== null)
+            return $gate;
 
         $query = Delivery::query()
             ->where('pickup_branch_id', $request->user()->branch_id)
@@ -59,7 +62,7 @@ class RegionalDispatcherController extends Controller
             Delivery::STATUS_CANCELLED,
         ];
         $filtered = array_values(array_intersect($requested, $valid));
-        if (! empty($filtered)) {
+        if (!empty($filtered)) {
             $query->whereIn('status', $filtered);
         }
 
@@ -87,7 +90,8 @@ class RegionalDispatcherController extends Controller
     public function show(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolveRegional($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         return $this->success(new DeliveryResource($model), 'OK');
     }
@@ -95,10 +99,12 @@ class RegionalDispatcherController extends Controller
     public function assign(Request $request, int $delivery): JsonResponse
     {
         $gate = $this->gate($request);
-        if ($gate !== null) return $gate;
+        if ($gate !== null)
+            return $gate;
 
         $model = $this->resolveRegional($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         if ($model->status !== Delivery::STATUS_BATCHED) {
             return $this->error(
@@ -136,10 +142,12 @@ class RegionalDispatcherController extends Controller
         int $delivery,
     ): JsonResponse {
         $gate = $this->gate($request);
-        if ($gate !== null) return $gate;
+        if ($gate !== null)
+            return $gate;
 
         $model = $this->resolveRegional($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         if ($model->status !== Delivery::STATUS_ASSIGNED) {
             return $this->error(
@@ -190,7 +198,7 @@ class RegionalDispatcherController extends Controller
         $this->auditLogger->logCurrentUser(
             action: 'delivery.dispatched',
             description: "Dispatched regional delivery {$model->tracking_id} via "
-                . "{$ticket->provider_name} ({$ticket->ticket_number}).",
+            . "{$ticket->provider_name} ({$ticket->ticket_number}).",
             subject: $model,
             changes: [
                 'status' => ['from' => $oldStatus, 'to' => Delivery::STATUS_DISPATCHED],
@@ -200,6 +208,15 @@ class RegionalDispatcherController extends Controller
             ],
         );
 
+        try {
+            $this->notifications->deliveryDispatched($model);
+        } catch (\Throwable $e) {
+            Log::error(
+                'Notification write after dispatch failed',
+                ['delivery_id' => $model->id, 'error' => $e->getMessage()],
+            );
+        }
+
         $model->load(['items', 'dispatcherTicket']);
 
         return $this->success(new DeliveryResource($model), 'Regional delivery dispatched.');
@@ -208,10 +225,12 @@ class RegionalDispatcherController extends Controller
     public function confirmArrival(Request $request, int $delivery): JsonResponse
     {
         $gate = $this->gate($request);
-        if ($gate !== null) return $gate;
+        if ($gate !== null)
+            return $gate;
 
         $model = $this->resolveRegional($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         if ($model->status !== Delivery::STATUS_DISPATCHED) {
             return $this->error(
@@ -239,6 +258,16 @@ class RegionalDispatcherController extends Controller
             ],
         );
 
+                try {
+            $this->notifications->deliveryDelivered($model);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error(
+                'Notification write after confirm-arrival failed',
+                ['delivery_id' => $model->id, 'error' => $e->getMessage()],
+            );
+        }
+
+        
         // Phase 11.3 — award dispatcher compensation. Best-effort:
         // never roll back the confirmation; log and allow manual replay.
         try {
@@ -259,7 +288,8 @@ class RegionalDispatcherController extends Controller
     public function ticket(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolveRegional($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         if ($model->dispatcherTicket === null) {
             return $this->error('No ticket has been issued for this delivery.', null, 404);
@@ -283,7 +313,7 @@ class RegionalDispatcherController extends Controller
                 403,
             );
         }
-        if (! $user->dispatcher_enabled) {
+        if (!$user->dispatcher_enabled) {
             return $this->error(
                 'Regional dispatch requires dispatcher privileges. Contact your manager.',
                 null,
@@ -296,7 +326,7 @@ class RegionalDispatcherController extends Controller
     private function resolveRegional(Request $request, int $id): Delivery|JsonResponse
     {
         $user = $request->user();
-        if ($user->branch_id === null || ! $user->dispatcher_enabled) {
+        if ($user->branch_id === null || !$user->dispatcher_enabled) {
             return $this->error(
                 'Regional dispatch requires dispatcher privileges.',
                 null,
@@ -310,7 +340,7 @@ class RegionalDispatcherController extends Controller
             ->where('id', $id)
             ->first();
 
-        if (! $model) {
+        if (!$model) {
             return $this->error('Regional delivery not found.', null, 404);
         }
         return $model;

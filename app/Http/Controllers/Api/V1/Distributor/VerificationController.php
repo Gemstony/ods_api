@@ -30,7 +30,9 @@ class VerificationController extends Controller
 
     public function __construct(
         private readonly VerificationCodeService $verification,
-    ) {}
+        private readonly \App\Services\Notifications\NotificationService $notifications,
+    ) {
+    }
 
     public function issue(Request $request, int $delivery): JsonResponse
     {
@@ -57,17 +59,26 @@ class VerificationController extends Controller
             return $this->error($e->getMessage(), null, 422);
         }
 
+        try {
+            $this->notifications->codeIssued($model);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error(
+                'Notification write after code issue failed',
+                ['delivery_id' => $model->id, 'error' => $e->getMessage()],
+            );
+        }
+
         return $this->success(
             data: [
                 'delivery_id' => $model->id,
                 'tracking_id' => $model->tracking_id,
                 'codes' => [
                     'distributor' => [
-                        'code'       => $distRaw,
+                        'code' => $distRaw,
                         'expires_at' => $distCode->expires_at?->toIso8601String(),
                     ],
                     'recipient' => [
-                        'code'       => $recipRaw,
+                        'code' => $recipRaw,
                         'expires_at' => $recipCode->expires_at?->toIso8601String(),
                     ],
                 ],

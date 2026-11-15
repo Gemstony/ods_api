@@ -30,7 +30,9 @@ class RiderDeliveryController extends Controller
         private readonly AuditLogger $auditLogger,
         private readonly CompensationService $compensation,
         private readonly VerificationCodeService $verification,
-    ) {}
+        private readonly \App\Services\Notifications\NotificationService $notifications,
+    ) {
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -55,18 +57,20 @@ class RiderDeliveryController extends Controller
                 Delivery::STATUS_EXPIRED,
             ];
             $filtered = array_values(array_intersect($requested, $valid));
-            if (! empty($filtered)) {
+            if (!empty($filtered)) {
                 $query->whereIn('status', $filtered);
             }
         }
 
         if ($request->filled('service_type')) {
             $type = $request->query('service_type');
-            if (in_array($type, [
-                Delivery::SERVICE_RECEIVE,
-                Delivery::SERVICE_SEND,
-                Delivery::SERVICE_REGIONAL,
-            ], true)) {
+            if (
+                in_array($type, [
+                    Delivery::SERVICE_RECEIVE,
+                    Delivery::SERVICE_SEND,
+                    Delivery::SERVICE_REGIONAL,
+                ], true)
+            ) {
                 $query->where('service_type', $type);
             }
         }
@@ -99,7 +103,7 @@ class RiderDeliveryController extends Controller
             ->where('id', $delivery)
             ->first();
 
-        if (! $model) {
+        if (!$model) {
             return $this->error('Delivery not found.', null, 404);
         }
 
@@ -165,7 +169,7 @@ class RiderDeliveryController extends Controller
             ->where('rider_id', $riderId)
             ->first();
 
-        if (! $delivery) {
+        if (!$delivery) {
             return $this->error('Delivery not found.', null, 404);
         }
 
@@ -221,6 +225,21 @@ class RiderDeliveryController extends Controller
             ],
         );
 
+        try {
+            match ($newStatus) {
+                Delivery::STATUS_ACCEPTED => $this->notifications->deliveryAccepted($delivery),
+                Delivery::STATUS_PICKED_UP => $this->notifications->deliveryPickedUp($delivery),
+                Delivery::STATUS_DELIVERED => $this->notifications->deliveryDelivered($delivery),
+                default => null,
+            };
+        } catch (\Throwable $e) {
+            Log::error('Notification write after delivery transition failed', [
+                'delivery_id' => $delivery->id,
+                'status' => $newStatus,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         $delivery->load(['items']);
 
         return $this->success(new DeliveryResource($delivery), 'OK');
@@ -242,8 +261,8 @@ class RiderDeliveryController extends Controller
             return $this->error(
                 "A verification code is required to {$actionLabel} this delivery.",
                 [
-                    'outcome'          => 'no_code_provided',
-                    'code_type'        => $codeType,
+                    'outcome' => 'no_code_provided',
+                    'code_type' => $codeType,
                     'remaining_attempts' => $this->verification->maxAttempts(),
                 ],
                 422,
@@ -257,7 +276,7 @@ class RiderDeliveryController extends Controller
             $request->user(),
         );
 
-        if (! $result->isSuccess()) {
+        if (!$result->isSuccess()) {
             return $this->error(
                 $result->outcome->message(),
                 array_merge($result->toArray(), [

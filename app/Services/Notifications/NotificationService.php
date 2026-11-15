@@ -1,0 +1,285 @@
+<?php
+
+namespace App\Services\Notifications;
+
+use App\Models\Delivery;
+use App\Models\Notification;
+use App\Models\Payment;
+use App\Models\Role;
+use App\Models\User;
+use Illuminate\Support\Facades\Log;
+
+/**
+ * Creates user-facing notification rows (Phase 13.1).
+ *
+ * Distinction from AuditLogger: AuditLog is a compliance trail (who did
+ * what), never shown in the app. Notifications are user-facing — they
+ * have read_at / dismissed_at state and deep-link payloads.
+ *
+ * Every method is best-effort: exceptions are logged but never bubble
+ * up to the caller. A failed notification never breaks the underlying
+ * business operation (payment, delivery transition, etc.).
+ */
+class NotificationService
+{
+    // ═════════════════════════════════════════════════════════
+    // Core primitives
+    // ═════════════════════════════════════════════════════════
+
+    public function notify(
+        User $user,
+        NotificationType $type,
+        string $title,
+        ?string $body = null,
+        array $data = [],
+        array $channels = ['in_app'],
+        ?string $priority = null,
+    ): ?Notification {
+        try {
+            // Dedupe terminal events within a 5-minute window.
+            $deliveryId = isset($data['delivery_id']) ? (int) $data['delivery_id'] : null;
+            if ($type->isTerminal() && $this->hasRecent($user->id, $type, $deliveryId)) {
+                return null;
+            }
+
+            $notification = Notification::send(
+                user: $user,
+                type: $type->value,
+                title: $title,
+                body: $body,
+                data: $data,
+                channels: $channels,
+                priority: $priority ?? $type->defaultPriority(),
+            );
+
+            // In-app-only notifications are "sent" as soon as written —
+            // the app reads them from the same endpoint. SMS/push keep
+            // `pending` until Phase 13.2/13.3 dispatch them.
+            if ($channels === ['in_app']) {
+                $notification->update([
+                    'status'  => Notification::STATUS_SENT,
+                    'sent_at' => now(),
+                ]);
+            }
+
+            return $notification;
+        } catch (\Throwable $e) {
+            Log::error('Notification write failed', [
+                'user_id' => $user->id,
+                'type'    => $type->value,
+                'error'   => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    public function notifyMany(
+        iterable $users,
+        NotificationType $type,
+        string $title,
+        ?string $body = null,
+        array $data = [],
+        array $channels = ['in_app'],
+        ?string $priority = null,
+    ): void {
+        foreach ($users as $user) {
+            $this->notify($user, $type, $title, $body, $data, $channels, $priority);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // Typed event helpers — called from the write-side controllers
+    // ═════════════════════════════════════════════════════════
+
+        public function paymentCompleted(Payment $payment): void
+    {
+        $delivery = $payment->delivery;
+        if ($delivery === null) return;
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) return;
+
+        $amountLabel = $payment->currency . ' '
+            . number_format((float) $payment->amount, 0);
+
+        $this->notify(
+            user: $distributor,
+            type: NotificationType::PaymentCompleted,
+            title: 'Payment received',
+            body: "Your payment of {$amountLabel} for "
+                . "{$delivery->tracking_id} was received. The delivery "
+                . "is now ready for pickup.",
+            data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    
+    public function paymentFailed(Payment $payment): void
+    {
+        $delivery = $payment->delivery;
+        if ($delivery === null) return;
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) return;
+
+        $this->notify(
+            user: $distributor,
+            type: NotificationType::PaymentFailed,
+            title: 'Payment failed',
+            body: 'Payment for ' . $delivery->tracking_id
+                . ' failed: ' . ($payment->failure_reason ?? 'unknown error')
+                . '. Tap to try again.',
+            data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    public function deliveryAssigned(Delivery $delivery): void
+    {
+        $rider = $delivery->rider;
+        $distributor = User::find($delivery->distributor_id);
+
+        if ($rider !== null) {
+            $this->notify(
+                user: $rider,
+                type: NotificationType::DeliveryAssigned,
+                title: 'New task: ' . $delivery->tracking_id,
+                body: 'A delivery has been assigned to you. '
+                    . 'Accept it from the Tasks tab.',
+                data: $this->deliveryPayload($delivery),
+            );
+        }
+
+        if ($distributor !== null) {
+            $this->notify(
+                user: $distributor,
+                type: NotificationType::DeliveryAssigned,
+                title: 'Rider assigned',
+                body: 'A rider has been assigned to ' . $delivery->tracking_id
+                    . ' and is on the way to pick it up.',
+                data: $this->deliveryPayload($delivery),
+            );
+        }
+    }
+
+    public function deliveryAccepted(Delivery $delivery): void
+    {
+        $this->notifyDistributor(
+            $delivery,
+            NotificationType::DeliveryAccepted,
+            'Your rider accepted the delivery',
+            'The rider for ' . $delivery->tracking_id . ' has accepted and will '
+                . 'pick up the package shortly.',
+        );
+    }
+
+    public function deliveryPickedUp(Delivery $delivery): void
+    {
+        $this->notifyDistributor(
+            $delivery,
+            NotificationType::DeliveryPickedUp,
+            'Package picked up',
+            'Your package ' . $delivery->tracking_id . ' has been picked up '
+                . 'and is en route.',
+        );
+    }
+
+    public function deliveryDispatched(Delivery $delivery): void
+    {
+        $this->notifyDistributor(
+            $delivery,
+            NotificationType::DeliveryDispatched,
+            'Package dispatched',
+            'Your regional package ' . $delivery->tracking_id
+                . ' has been dispatched on the bus / cargo carrier.',
+        );
+    }
+
+    public function deliveryDelivered(Delivery $delivery): void
+    {
+        $this->notifyDistributor(
+            $delivery,
+            NotificationType::DeliveryDelivered,
+            'Package delivered',
+            'Your package ' . $delivery->tracking_id . ' has been delivered. '
+                . 'Thank you for using ODS.',
+        );
+    }
+
+    public function packageReady(Delivery $delivery): void
+    {
+        if ($delivery->pickup_branch_id === null) return;
+
+        $receivers = User::query()
+            ->where('branch_id', $delivery->pickup_branch_id)
+            ->where('status', User::STATUS_ACTIVE)
+            ->whereHas('role', fn ($q) => $q->where('name', Role::RECEIVER))
+            ->get();
+
+        $this->notifyMany(
+            users: $receivers,
+            type: NotificationType::PackageReady,
+            title: 'Package ready for handover',
+            body: $delivery->tracking_id . ' is at the branch and waiting '
+                . 'for a rider to pick it up.',
+            data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    public function codeIssued(Delivery $delivery): void
+    {
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) return;
+
+        $this->notify(
+            user: $distributor,
+            type: NotificationType::CodeIssued,
+            title: 'Verification codes issued',
+            body: 'Codes for ' . $delivery->tracking_id . ' have been generated. '
+                . 'Share the DISTRIBUTOR code with the Rider/Receiver at pickup '
+                . 'and the RECIPIENT code with the recipient at handover.',
+            data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // Internals
+    // ═════════════════════════════════════════════════════════
+
+    private function notifyDistributor(
+        Delivery $delivery,
+        NotificationType $type,
+        string $title,
+        ?string $body,
+    ): void {
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) return;
+
+        $this->notify(
+            user: $distributor,
+            type: $type,
+            title: $title,
+            body: $body,
+            data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    private function hasRecent(int $userId, NotificationType $type, ?int $deliveryId): bool
+    {
+        if ($deliveryId === null) return false;
+
+        return Notification::query()
+            ->where('user_id', $userId)
+            ->where('type', $type->value)
+            ->where('created_at', '>=', now()->subMinutes(5))
+            ->where('data->delivery_id', $deliveryId)
+            ->exists();
+    }
+
+    private function deliveryPayload(Delivery $delivery): array
+    {
+        return [
+            'delivery_id'  => $delivery->id,
+            'tracking_id'  => $delivery->tracking_id,
+            'service_type' => $delivery->service_type,
+            'action'       => 'open_delivery',
+        ];
+    }
+}

@@ -25,12 +25,15 @@ class ReceiverPackageController extends Controller
     public function __construct(
         private readonly AuditLogger $auditLogger,
         private readonly VerificationCodeService $verification,
-    ) {}
+        private readonly \App\Services\Notifications\NotificationService $notifications,
+    ) {
+    }
 
     public function index(Request $request): JsonResponse
     {
         $branchId = $this->branchId($request);
-        if ($branchId instanceof JsonResponse) return $branchId;
+        if ($branchId instanceof JsonResponse)
+            return $branchId;
 
         $query = Delivery::query()
             ->where('pickup_branch_id', $branchId)
@@ -62,7 +65,7 @@ class ReceiverPackageController extends Controller
             Delivery::STATUS_EXPIRED,
         ];
         $filtered = array_values(array_intersect($requested, $valid));
-        if (! empty($filtered)) {
+        if (!empty($filtered)) {
             $query->whereIn('status', $filtered);
         }
 
@@ -90,7 +93,8 @@ class ReceiverPackageController extends Controller
     public function show(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         return $this->success(new DeliveryResource($model), 'OK');
     }
@@ -98,7 +102,8 @@ class ReceiverPackageController extends Controller
     public function verify(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         [$canRelease, $reason] = $this->evaluateRelease($model);
 
@@ -120,10 +125,11 @@ class ReceiverPackageController extends Controller
     public function release(Request $request, int $delivery): JsonResponse
     {
         $model = $this->resolvePackage($request, $delivery);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse)
+            return $model;
 
         [$canRelease, $reason] = $this->evaluateRelease($model);
-        if (! $canRelease) {
+        if (!$canRelease) {
             return $this->error(
                 $reason ?? 'Package cannot be released.',
                 ['current_status' => $model->status],
@@ -138,8 +144,8 @@ class ReceiverPackageController extends Controller
                 return $this->error(
                     'A verification code is required to release this package.',
                     [
-                        'outcome'            => 'no_code_provided',
-                        'code_type'          => VerificationCode::TYPE_DISTRIBUTOR,
+                        'outcome' => 'no_code_provided',
+                        'code_type' => VerificationCode::TYPE_DISTRIBUTOR,
                         'remaining_attempts' => $this->verification->maxAttempts(),
                     ],
                     422,
@@ -153,7 +159,7 @@ class ReceiverPackageController extends Controller
                 $request->user(),
             );
 
-            if (! $result->isSuccess()) {
+            if (!$result->isSuccess()) {
                 return $this->error(
                     $result->outcome->message(),
                     array_merge($result->toArray(), [
@@ -179,6 +185,15 @@ class ReceiverPackageController extends Controller
             ],
         );
 
+        try {
+            $this->notifications->deliveryPickedUp($model);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error(
+                'Notification write after receiver release failed',
+                ['delivery_id' => $model->id, 'error' => $e->getMessage()],
+            );
+        }
+
         $model->load(['items', 'rider:id,name,phone']);
 
         return $this->success(
@@ -203,7 +218,8 @@ class ReceiverPackageController extends Controller
     private function resolvePackage(Request $request, int $id): Delivery|JsonResponse
     {
         $branchId = $this->branchId($request);
-        if ($branchId instanceof JsonResponse) return $branchId;
+        if ($branchId instanceof JsonResponse)
+            return $branchId;
 
         $model = Delivery::with(['items', 'rider:id,name,phone'])
             ->where('pickup_branch_id', $branchId)
@@ -211,7 +227,7 @@ class ReceiverPackageController extends Controller
             ->where('id', $id)
             ->first();
 
-        if (! $model) {
+        if (!$model) {
             return $this->error('Package not found.', null, 404);
         }
         return $model;

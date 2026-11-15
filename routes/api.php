@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\HealthController;
+use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\Webhooks\ClickPesaWebhookController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Owner\BranchController;
@@ -59,6 +60,14 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings/public', [PublicSettingsController::class, 'index'])
         ->middleware('throttle:60,1');
+
+    // ─── Notifications (Phase 13.1 — role-agnostic) ──────────
+    Route::middleware('auth:api')->group(function () {
+        Route::get('/notifications', [NotificationController::class, 'index']);
+        Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+        Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
+        Route::patch('/notifications/{notification}/dismiss', [NotificationController::class, 'dismiss']);
+    });
 
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
@@ -131,7 +140,6 @@ Route::prefix('v1')->group(function () {
             Route::get('payments/{payment}', [DistributorPaymentController::class, 'show']);
             Route::post('payments/{payment}/refresh', [DistributorPaymentController::class, 'refresh']);
 
-            // Phase 12.2 — issue verification codes for a delivery.
             Route::post(
                 'deliveries/{delivery}/verification/issue',
                 [DistributorVerificationController::class, 'issue'],

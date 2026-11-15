@@ -29,6 +29,7 @@ class PaymentService
     public function __construct(
         private readonly ClickPesaClient $client,
         private readonly AuditLogger $auditLogger,
+        private readonly \App\Services\Notifications\NotificationService $notifications,
     ) {}
 
     // ═════════════════════════════════════════════════════════
@@ -268,7 +269,7 @@ class PaymentService
      *
      * @return bool True = state changed, false = no-op or rejected by terminal guard
      */
-    public function applyStatus(Payment $payment, PaymentStatus $clickPesa, array $providerPayload): bool
+       public function applyStatus(Payment $payment, PaymentStatus $clickPesa, array $providerPayload): bool
     {
         $newStatus = PaymentStatusMapper::toPaymentStatus($clickPesa);
         if ($newStatus === null) {
@@ -280,8 +281,10 @@ class PaymentService
         }
 
         $changed = false;
+        $justCompleted = false;
+        $justFailed = false;
 
-        DB::transaction(function () use ($payment, $newStatus, $providerPayload, &$changed) {
+        DB::transaction(function () use ($payment, $newStatus, $providerPayload, &$changed, &$justCompleted, &$justFailed) {
             /** @var Payment $locked */
             $locked = Payment::whereKey($payment->id)->lockForUpdate()->first();
             if (! PaymentStatusMapper::canTransition($locked->status, $newStatus)) {
@@ -292,9 +295,11 @@ class PaymentService
             if ($newStatus === Payment::STATUS_COMPLETED) {
                 $changes['paid_at'] = now();
                 $changes['failure_reason'] = null;
+                $justCompleted = true;
             } elseif ($newStatus === Payment::STATUS_FAILED) {
                 $changes['failed_at'] = now();
                 $changes['failure_reason'] = $this->extractFailureReason($providerPayload);
+                $justFailed = true;
             }
 
             $locked->update($changes);
@@ -319,6 +324,24 @@ class PaymentService
                 );
             }
         });
+
+        // Phase 13.1 — fire notifications AFTER commit so the row exists
+        // and can be linked from the notification's `data.delivery_id`.
+        if ($changed) {
+            try {
+                $fresh = $payment->fresh();
+                if ($justCompleted && $fresh !== null) {
+                    $this->notifications->paymentCompleted($fresh);
+                } elseif ($justFailed && $fresh !== null) {
+                    $this->notifications->paymentFailed($fresh);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Notification write after payment status change failed', [
+                    'payment_id' => $payment->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+        }
 
         return $changed;
     }
@@ -353,7 +376,7 @@ class PaymentService
     // Internals
     // ═════════════════════════════════════════════════════════
 
-    private function markDeliveryPaidIfComplete(int $deliveryId): void
+       private function markDeliveryPaidIfComplete(int $deliveryId): void
     {
         DB::transaction(function () use ($deliveryId) {
             /** @var Delivery $delivery */
@@ -374,10 +397,21 @@ class PaymentService
                     subject: $delivery,
                     changes: ['status' => Delivery::STATUS_PAID],
                 );
+
+                // Phase 13.1 — notify branch receivers the package is ready.
+                try {
+                    $this->notifications->packageReady($delivery);
+                } catch (\Throwable $e) {
+                    Log::error('Notification write after delivery paid failed', [
+                        'delivery_id' => $delivery->id,
+                        'error'       => $e->getMessage(),
+                    ]);
+                }
             }
         });
     }
 
+    
     private function amountForStage(Delivery $delivery, string $stage): float
     {
         return match ($stage) {
