@@ -167,6 +167,251 @@ class PaymentService
         }
     }
 
+
+        // ═════════════════════════════════════════════════════════
+    // Manual payments (Phase 13.7)
+    // ═════════════════════════════════════════════════════════
+
+    /**
+     * Create a manual payment record (cash / manual method).
+     *
+     * Does NOT call ClickPesa. The row sits at `pending` until a Manager
+     * approves or rejects. Delivery stays `pending_payment` until approval
+     * cascades through `markDeliveryPaidIfComplete()`.
+     */
+    public function initiateManualPayment(
+        Delivery $delivery,
+        User $initiator,
+        string $method,
+        string $stage = Payment::STAGE_FULL,
+        ?string $notes = null,
+    ): Payment {
+        if (! in_array($method, [Payment::METHOD_CASH, Payment::METHOD_MANUAL], true)) {
+            throw PaymentException::invalidStage($method);
+        }
+
+        if (! in_array($stage, [Payment::STAGE_FULL, Payment::STAGE_ODS_FEE, Payment::STAGE_TRANSPORT_FARE], true)) {
+            throw PaymentException::invalidStage($stage);
+        }
+
+        if ($delivery->status !== Delivery::STATUS_PENDING_PAYMENT) {
+            throw PaymentException::deliveryNotPayable($delivery->status);
+        }
+
+        $amount = $this->amountForStage($delivery, $stage);
+        if ($amount <= 0) {
+            throw PaymentException::invalidAmount($stage);
+        }
+
+        $payment = DB::transaction(function () use ($delivery, $initiator, $amount, $stage, $method, $notes) {
+            // Block if any pending payment already exists for this tuple —
+            // regardless of method. Prevents a Distributor from opening a
+            // manual payment while a ClickPesa USSD is still in flight.
+            $existing = Payment::where('delivery_id', $delivery->id)
+                ->where('stage', $stage)
+                ->whereIn('status', [Payment::STATUS_PENDING, Payment::STATUS_PROCESSING])
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing !== null) {
+                throw PaymentException::duplicatePending($existing);
+            }
+
+            $completed = Payment::where('delivery_id', $delivery->id)
+                ->where('stage', $stage)
+                ->where('status', Payment::STATUS_COMPLETED)
+                ->exists();
+            if ($completed) {
+                throw PaymentException::alreadyPaid($stage);
+            }
+
+            return Payment::create([
+                'delivery_id'  => $delivery->id,
+                'stage'        => $stage,
+                'amount'       => $amount,
+                'currency'     => $delivery->currency ?? 'TZS',
+                'method'       => $method,
+                'status'       => Payment::STATUS_PENDING,
+                'initiated_by' => $initiator->id,
+                'initiated_at' => now(),
+                'expires_at'   => null, // no auto-expiry — Manager decides
+                'metadata'     => [
+                    'manual_notes' => $notes,
+                    'initiated_by_name' => $initiator->name,
+                ],
+            ]);
+        });
+
+        $this->recordTransaction(
+            payment: $payment,
+            type: 'initiate',
+            status: 'success',
+            request: [
+                'method' => $method,
+                'stage' => $stage,
+                'amount' => $amount,
+                'notes' => $notes,
+            ],
+            response: ['pending_manager_approval' => true],
+            error: null,
+        );
+
+        $this->auditLogger->logCurrentUser(
+            action: 'payment.manual_initiated',
+            description: "Initiated {$method} payment for delivery {$delivery->tracking_id}.",
+            subject: $payment,
+            changes: [
+                'amount' => $payment->amount,
+                'stage'  => $stage,
+                'method' => $method,
+                'notes'  => $notes,
+            ],
+        );
+
+        try {
+            $this->notifications->manualPaymentInitiated($payment->fresh());
+        } catch (\Throwable $e) {
+            Log::error('Notification write after manual payment initiate failed', [
+                'payment_id' => $payment->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return $payment->fresh();
+    }
+
+    /**
+     * Approve a manual payment. Transitions to `completed` and cascades
+     * through `markDeliveryPaidIfComplete()` — if this was the last
+     * outstanding stage, the delivery becomes `paid`.
+     */
+    public function approveManualPayment(User $approver, Payment $payment): Payment
+    {
+        if (! in_array($payment->method, [Payment::METHOD_CASH, Payment::METHOD_MANUAL], true)) {
+            throw new PaymentException(
+                'This payment is not a manual payment.',
+                422,
+                ['method' => $payment->method],
+            );
+        }
+
+        if ($payment->status !== Payment::STATUS_PENDING) {
+            throw new PaymentException(
+                "Cannot approve payment in '{$payment->status}' status. Only 'pending' payments can be approved.",
+                422,
+                ['current_status' => $payment->status],
+            );
+        }
+
+        $payment->update([
+            'status'  => Payment::STATUS_COMPLETED,
+            'paid_at' => now(),
+        ]);
+
+        $this->recordTransaction(
+            payment: $payment,
+            type: 'verify',
+            status: 'success',
+            request: null,
+            response: [
+                'approved_by' => $approver->id,
+                'approved_at' => now()->toIso8601String(),
+            ],
+            error: null,
+        );
+
+        $this->auditLogger->log(
+            $approver,
+            action: 'payment.manual_approved',
+            description: "Approved {$payment->method} payment {$payment->reference}.",
+            subject: $payment,
+            changes: [
+                'amount'      => $payment->amount,
+                'method'      => $payment->method,
+                'approved_by' => $approver->id,
+            ],
+        );
+
+        // Cascades to delivery.paid if all stages are complete.
+        $this->markDeliveryPaidIfComplete($payment->delivery_id);
+
+        try {
+            $this->notifications->paymentCompleted($payment->fresh());
+        } catch (\Throwable $e) {
+            Log::error('Notification write after manual payment approval failed', [
+                'payment_id' => $payment->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return $payment->fresh();
+    }
+
+    /**
+     * Reject a manual payment with a required reason. Delivery stays
+     * `pending_payment`; Distributor can retry with a fresh record.
+     */
+    public function rejectManualPayment(User $approver, Payment $payment, string $reason): Payment
+    {
+        if (! in_array($payment->method, [Payment::METHOD_CASH, Payment::METHOD_MANUAL], true)) {
+            throw new PaymentException(
+                'This payment is not a manual payment.',
+                422,
+                ['method' => $payment->method],
+            );
+        }
+
+        if ($payment->status !== Payment::STATUS_PENDING) {
+            throw new PaymentException(
+                "Cannot reject payment in '{$payment->status}' status. Only 'pending' payments can be rejected.",
+                422,
+                ['current_status' => $payment->status],
+            );
+        }
+
+        $payment->update([
+            'status'         => Payment::STATUS_FAILED,
+            'failed_at'      => now(),
+            'failure_reason' => substr($reason, 0, 250),
+        ]);
+
+        $this->recordTransaction(
+            payment: $payment,
+            type: 'verify',
+            status: 'failed',
+            request: null,
+            response: [
+                'rejected_by' => $approver->id,
+                'rejected_at' => now()->toIso8601String(),
+            ],
+            error: $reason,
+        );
+
+        $this->auditLogger->log(
+            $approver,
+            action: 'payment.manual_rejected',
+            description: "Rejected {$payment->method} payment {$payment->reference}: {$reason}",
+            subject: $payment,
+            changes: [
+                'amount'      => $payment->amount,
+                'method'      => $payment->method,
+                'reason'      => $reason,
+                'rejected_by' => $approver->id,
+            ],
+        );
+
+        try {
+            $this->notifications->paymentFailed($payment->fresh());
+        } catch (\Throwable $e) {
+            Log::error('Notification write after manual payment rejection failed', [
+                'payment_id' => $payment->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return $payment->fresh();
+    }
+    
     // ═════════════════════════════════════════════════════════
     // Sync (poll)
     // ═════════════════════════════════════════════════════════

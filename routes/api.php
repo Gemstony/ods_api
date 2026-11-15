@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Owner\DashboardController;
 use App\Http\Controllers\Api\V1\Owner\DisputeController as OwnerDisputeController;
 use App\Http\Controllers\Api\V1\Owner\EarningLedgerController;
 use App\Http\Controllers\Api\V1\Owner\FinanceController;
+use App\Http\Controllers\Api\V1\Owner\ManualPaymentController as OwnerManualPaymentController;
 use App\Http\Controllers\Api\V1\Owner\PaymentLedgerController;
 use App\Http\Controllers\Api\V1\Owner\PayoutLedgerController;
 use App\Http\Controllers\Api\V1\Owner\PricingConfigController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\Api\V1\Owner\ReconciliationController;
 use App\Http\Controllers\Api\V1\Owner\SettingsController;
 use App\Http\Controllers\Api\V1\Owner\UserController;
 use App\Http\Controllers\Api\V1\Public\PublicSettingsController;
+use App\Http\Controllers\Api\V1\Manager\DisputeController as ManagerDisputeController;
 use App\Http\Controllers\Api\V1\Manager\ManagerAssignmentController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBatchingController;
 use App\Http\Controllers\Api\V1\Manager\ManagerBranchController;
@@ -25,7 +27,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
-use App\Http\Controllers\Api\V1\Manager\DisputeController as ManagerDisputeController;
+use App\Http\Controllers\Api\V1\Manager\ManualPaymentController as ManagerManualPaymentController;
 use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
 use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
@@ -73,17 +75,23 @@ Route::prefix('v1')->group(function () {
         Route::patch('/notifications/{notification}/dismiss', [NotificationController::class, 'dismiss']);
     });
 
-    // ─── Owner (Phase 5 + ledger 11.4 + disputes 13.4) ───────
+    // ═════════════════════════════════════════════════════════
+    // OWNER — Phases 5 + 11.4 + 13.4 + 13.7
+    // ═════════════════════════════════════════════════════════
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
         ->group(function () {
             Route::get('dashboard', [DashboardController::class, 'index']);
             Route::get('finance/summary', [FinanceController::class, 'summary']);
+
+            // ─── Branches ────────────────────────────────────
             Route::apiResource('branches', BranchController::class)
                 ->only(['index', 'store', 'show', 'update']);
             Route::post('branches/{branch}/assign-manager', [BranchManagerController::class, 'assign']);
             Route::delete('branches/{branch}/assign-manager', [BranchManagerController::class, 'unassign']);
             Route::get('branches/{branch}/managers', [BranchManagerController::class, 'index']);
+
+            // ─── Users ───────────────────────────────────────
             Route::get('users', [UserController::class, 'index']);
             Route::post('users', [UserController::class, 'store']);
             Route::get('users/{user}', [UserController::class, 'show']);
@@ -91,6 +99,8 @@ Route::prefix('v1')->group(function () {
             Route::post('users/{user}/approve', [UserController::class, 'approve']);
             Route::patch('users/{user}/status', [UserController::class, 'updateStatus']);
             Route::post('users/{user}/reset-password', [UserController::class, 'resetPassword']);
+
+            // ─── Settings + Pricing ──────────────────────────
             Route::get('settings', [SettingsController::class, 'index']);
             Route::put('settings', [SettingsController::class, 'bulkUpdate']);
             Route::get('settings/{key}', [SettingsController::class, 'show'])
@@ -100,17 +110,28 @@ Route::prefix('v1')->group(function () {
             Route::get('pricing-config', [PricingConfigController::class, 'show']);
             Route::put('pricing-config', [PricingConfigController::class, 'update']);
 
+            // ─── Manual payments (Phase 13.7) ────────────────
+            // `payments/pending` MUST be declared BEFORE
+            // `payments/{payment}` or it gets matched as a payment ID.
+            Route::get('payments/pending', [OwnerManualPaymentController::class, 'index']);
+            Route::post('payments/{payment}/approve', [OwnerManualPaymentController::class, 'approve']);
+            Route::post('payments/{payment}/reject', [OwnerManualPaymentController::class, 'reject']);
+
+            // ─── Payment ledger (Phase 11.4) ─────────────────
             Route::get('payments', [PaymentLedgerController::class, 'index']);
             Route::get('payments/{payment}', [PaymentLedgerController::class, 'show']);
+
+            // ─── Earnings + Payouts ledger (Phase 11.4) ──────
             Route::get('earnings', [EarningLedgerController::class, 'index']);
             Route::get('earnings/{earning}', [EarningLedgerController::class, 'show']);
             Route::get('payouts', [PayoutLedgerController::class, 'index']);
             Route::get('payouts/{payout}', [PayoutLedgerController::class, 'show']);
 
+            // ─── Reconciliation (Phase 11.4) ─────────────────
             Route::post('ledger/reconcile', [ReconciliationController::class, 'reconcile']);
             Route::get('ledger/reconcile/last', [ReconciliationController::class, 'last']);
 
-            // Disputes (Phase 13.4)
+            // ─── Disputes (Phase 13.4) ───────────────────────
             Route::get('disputes', [OwnerDisputeController::class, 'index']);
             Route::get('disputes/{dispute}', [OwnerDisputeController::class, 'show']);
             Route::post('disputes/{dispute}/review', [OwnerDisputeController::class, 'startReview']);
@@ -119,51 +140,81 @@ Route::prefix('v1')->group(function () {
             Route::post('disputes/{dispute}/escalate', [OwnerDisputeController::class, 'escalate']);
         });
 
-    // ─── Manager (Phase 6 + disputes 13.4) ───────────────────
+    // ═════════════════════════════════════════════════════════
+    // MANAGER — Phases 6 + 10 + 13.4 + 13.7
+    // ═════════════════════════════════════════════════════════
     Route::middleware(['auth:api', 'role:manager'])
         ->prefix('manager')
         ->group(function () {
+            // ─── Branch ──────────────────────────────────────
             Route::get('branch', [ManagerBranchController::class, 'show']);
             Route::put('branch', [ManagerBranchController::class, 'update']);
+
+            // ─── Staff ───────────────────────────────────────
             Route::get('staff', [ManagerStaffController::class, 'index']);
             Route::post('staff', [ManagerStaffController::class, 'store']);
             Route::get('staff/{user}', [ManagerStaffController::class, 'show']);
             Route::put('staff/{user}', [ManagerStaffController::class, 'update']);
             Route::patch('staff/{user}/status', [ManagerStaffController::class, 'updateStatus']);
             Route::post('staff/{user}/reset-password', [ManagerStaffController::class, 'resetPassword']);
+
+            // ─── Deliveries + Dashboard + Packages ───────────
             Route::get('deliveries', [ManagerDeliveryController::class, 'index']);
             Route::get('deliveries/{delivery}', [ManagerDeliveryController::class, 'show']);
             Route::get('dashboard', [ManagerDashboardController::class, 'index']);
             Route::get('packages', [ManagerPackagesController::class, 'index']);
+
+            // ─── Orchestration (Phase 10.1-10.3) ─────────────
             Route::post('batching/run', [ManagerBatchingController::class, 'run']);
             Route::post('assignment/run', [ManagerAssignmentController::class, 'run']);
             Route::post('assignment/release-expired', [ManagerAssignmentController::class, 'releaseExpired']);
 
+            // ─── Manual payments (Phase 13.7) ────────────────
+            // No existing `payments/{payment}` route in this group, so
+            // no ordering conflict — but keep pending first anyway for
+            // consistency with the Owner group.
+            Route::get('payments/pending', [ManagerManualPaymentController::class, 'index']);
+            Route::post('payments/{payment}/approve', [ManagerManualPaymentController::class, 'approve']);
+            Route::post('payments/{payment}/reject', [ManagerManualPaymentController::class, 'reject']);
+
+            // ─── Disputes (Phase 13.4) ───────────────────────
             Route::get('disputes', [ManagerDisputeController::class, 'index']);
             Route::post('disputes', [ManagerDisputeController::class, 'store']);
             Route::get('disputes/{dispute}', [ManagerDisputeController::class, 'show']);
         });
 
-    // ─── Distributor (Phase 7 + payments 11.5 + verification 12.3 + disputes 13.4) ───
+    // ═════════════════════════════════════════════════════════
+    // DISTRIBUTOR — Phases 7 + 11.5 + 12.3 + 13.4 + 13.7
+    // ═════════════════════════════════════════════════════════
     Route::middleware(['auth:api', 'role:distributor'])
         ->prefix('distributor')
         ->group(function () {
+            // ─── Deliveries ──────────────────────────────────
+            // price-preview must be declared before {delivery}.
             Route::post('deliveries/price-preview', [DistributorDeliveryController::class, 'pricePreview']);
             Route::get('deliveries', [DistributorDeliveryController::class, 'index']);
             Route::post('deliveries', [DistributorDeliveryController::class, 'store']);
             Route::get('deliveries/{delivery}', [DistributorDeliveryController::class, 'show']);
+
+            // ─── Dashboard + Branches ────────────────────────
             Route::get('dashboard', [DistributorDashboardController::class, 'index']);
             Route::get('branches', [DistributorBranchController::class, 'index']);
 
+            // ─── Payments (Phase 11.5 + 13.7) ────────────────
+            // `payments/manual` is a distinct POST path — no collision
+            // with `payments/initiate` or `payments/{payment}/refresh`.
             Route::post('payments/initiate', [DistributorPaymentController::class, 'initiate']);
+            Route::post('payments/manual', [DistributorPaymentController::class, 'manual']);
             Route::get('payments/{payment}', [DistributorPaymentController::class, 'show']);
             Route::post('payments/{payment}/refresh', [DistributorPaymentController::class, 'refresh']);
 
+            // ─── Verification codes (Phase 12.3) ─────────────
             Route::post(
                 'deliveries/{delivery}/verification/issue',
                 [DistributorVerificationController::class, 'issue'],
             )->middleware('throttle:10,1');
 
+            // ─── Disputes (Phase 13.4) ───────────────────────
             Route::get('disputes', [DistributorDisputeController::class, 'index']);
             Route::post('disputes', [DistributorDisputeController::class, 'store']);
             Route::get('disputes/{dispute}', [DistributorDisputeController::class, 'show']);
@@ -172,7 +223,9 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:api', 'role:distributor'])
         ->get('/rewards/me', [DistributorRewardsController::class, 'show']);
 
-    // ─── Rider (Phase 8 + disputes 13.4) ─────────────────────
+    // ═════════════════════════════════════════════════════════
+    // RIDER — Phases 8 + 12.3 + 13.4
+    // ═════════════════════════════════════════════════════════
     Route::middleware(['auth:api', 'role:rider'])
         ->prefix('rider')
         ->group(function () {
@@ -186,12 +239,15 @@ Route::prefix('v1')->group(function () {
             Route::get('queue-status', [RiderAvailabilityController::class, 'show']);
             Route::patch('availability', [RiderAvailabilityController::class, 'update']);
 
+            // ─── Disputes (Phase 13.4) ───────────────────────
             Route::get('disputes', [RiderDisputeController::class, 'index']);
             Route::post('disputes', [RiderDisputeController::class, 'store']);
             Route::get('disputes/{dispute}', [RiderDisputeController::class, 'show']);
         });
 
-    // ─── Receiver (Phase 9) ──────────────────────────────────
+    // ═════════════════════════════════════════════════════════
+    // RECEIVER — Phases 9 + 9.5
+    // ═════════════════════════════════════════════════════════
     Route::middleware(['auth:api', 'role:receiver'])
         ->prefix('receiver')
         ->group(function () {

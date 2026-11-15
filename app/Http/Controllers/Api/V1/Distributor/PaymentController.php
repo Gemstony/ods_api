@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Distributor;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Distributor\InitiatePaymentRequest;
+use App\Http\Requests\Api\V1\Distributor\ManualPaymentRequest;
 use App\Models\Delivery;
 use App\Models\Payment;
 use App\Services\Payments\PaymentException;
@@ -12,23 +13,12 @@ use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-/**
- * Distributor-facing payment endpoints (Phase 11.2).
- *
- *   POST /distributor/payments/initiate       → start a ClickPesa USSD push
- *   GET  /distributor/payments/{payment}      → current state (no provider call)
- *   POST /distributor/payments/{payment}/refresh → actively poll + reconcile
- *
- * Every action is scoped to the authenticated distributor — a
- * distributor can only see and act on payments for their own deliveries.
- */
 class PaymentController extends Controller
 {
     use ApiResponse;
 
     public function __construct(private readonly PaymentService $payments) {}
 
-    // ─── initiate ─────────────────────────────────────────────
     public function initiate(InitiatePaymentRequest $request): JsonResponse
     {
         $user = $request->user();
@@ -66,7 +56,49 @@ class PaymentController extends Controller
         );
     }
 
-    // ─── show ─────────────────────────────────────────────────
+    /**
+     * POST /distributor/payments/manual
+     *
+     * Record a manual payment (cash at branch or off-app mobile money).
+     * Delivery stays `pending_payment` until a Manager approves.
+     */
+    public function manual(ManualPaymentRequest $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $delivery = Delivery::where('id', $request->integer('delivery_id'))
+            ->where('distributor_id', $user->id)
+            ->first();
+
+        if ($delivery === null) {
+            return $this->error('Delivery not found.', null, 404);
+        }
+
+        $method = (string) $request->input('method');
+        $stage = (string) ($request->input('stage') ?: Payment::STAGE_FULL);
+        $notes = $request->input('notes') !== null
+            ? (string) $request->input('notes')
+            : null;
+
+        try {
+            $payment = $this->payments->initiateManualPayment(
+                delivery: $delivery,
+                initiator: $user,
+                method: $method,
+                stage: $stage,
+                notes: $notes,
+            );
+        } catch (PaymentException $e) {
+            return $this->error($e->getMessage(), $e->context, $e->httpStatus);
+        }
+
+        return $this->success(
+            data: $this->paymentPayload($payment),
+            message: 'Manual payment recorded. Awaiting Manager approval.',
+            status: 201,
+        );
+    }
+
     public function show(Request $request, int $payment): JsonResponse
     {
         $model = $this->resolveOwnedPayment($request, $payment);
@@ -78,11 +110,20 @@ class PaymentController extends Controller
         );
     }
 
-    // ─── refresh ──────────────────────────────────────────────
     public function refresh(Request $request, int $payment): JsonResponse
     {
         $model = $this->resolveOwnedPayment($request, $payment);
         if ($model instanceof JsonResponse) return $model;
+
+        // Manual payments don't touch ClickPesa — no sync needed.
+        // Return the current state (which may have changed if a Manager
+        // approved/rejected while the Distributor was polling).
+        if (in_array($model->method, [Payment::METHOD_CASH, Payment::METHOD_MANUAL], true)) {
+            return $this->success(
+                data: $this->paymentPayload($model->fresh()),
+                message: 'Payment refreshed.',
+            );
+        }
 
         $fresh = $this->payments->syncPayment($model);
 
@@ -92,7 +133,6 @@ class PaymentController extends Controller
         );
     }
 
-    // ─── Helpers ──────────────────────────────────────────────
     private function resolveOwnedPayment(Request $request, int $paymentId): Payment|JsonResponse
     {
         $userId = $request->user()->id;

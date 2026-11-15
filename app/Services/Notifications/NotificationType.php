@@ -4,17 +4,18 @@ namespace App\Services\Notifications;
 
 enum NotificationType: string
 {
-    case PaymentCompleted   = 'payment.completed';
-    case PaymentFailed      = 'payment.failed';
-    case DeliveryAssigned   = 'delivery.assigned';
-    case DeliveryAccepted   = 'delivery.accepted';
-    case DeliveryPickedUp   = 'delivery.picked_up';
-    case DeliveryDispatched = 'delivery.dispatched';
-    case DeliveryDelivered  = 'delivery.delivered';
-    case PackageReady       = 'package.ready';
-    case CodeIssued         = 'code.issued';
-    case DisputeOpened      = 'dispute.opened';
-    case DisputeResolved    = 'dispute.resolved';
+    case PaymentCompleted        = 'payment.completed';
+    case PaymentFailed           = 'payment.failed';
+    case DeliveryAssigned        = 'delivery.assigned';
+    case DeliveryAccepted        = 'delivery.accepted';
+    case DeliveryPickedUp        = 'delivery.picked_up';
+    case DeliveryDispatched      = 'delivery.dispatched';
+    case DeliveryDelivered       = 'delivery.delivered';
+    case PackageReady            = 'package.ready';
+    case CodeIssued              = 'code.issued';
+    case DisputeOpened           = 'dispute.opened';
+    case DisputeResolved         = 'dispute.resolved';
+    case ManualPaymentInitiated  = 'payment.manual_initiated';
 
     public function isTerminal(): bool
     {
@@ -30,7 +31,8 @@ enum NotificationType: string
             self::PaymentFailed,
             self::DeliveryAssigned,
             self::CodeIssued,
-            self::DisputeOpened => 'high',
+            self::DisputeOpened,
+            self::ManualPaymentInitiated => 'high',
             default => 'normal',
         };
     }

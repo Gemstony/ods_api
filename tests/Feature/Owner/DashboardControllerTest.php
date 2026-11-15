@@ -4,16 +4,16 @@ namespace Tests\Feature\Owner;
 
 use App\Models\Branch;
 use App\Models\Delivery;
-use App\Models\DeliveryItem;
 use App\Models\DispatcherTicket;
+use App\Models\Dispute;
 use App\Models\Earning;
 use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
+use Carbon\Carbon;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
-use Carbon\Carbon;
 
 class DashboardControllerTest extends TestCase
 {
@@ -22,7 +22,7 @@ class DashboardControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        (new RoleSeeder())->run();
+        (new RoleSeeder)->run();
     }
 
     protected function owner(): User
@@ -123,31 +123,37 @@ class DashboardControllerTest extends TestCase
     // ─── Deliveries ───────────────────────────────────────────
     public function test_counts_deliveries_today_and_this_week(): void
     {
-        $owner = $this->owner();
-        $branch = Branch::factory()->create();
+        Carbon::setTestNow('2026-11-04 14:00:00'); // Wednesday, mid-week, mid-day
 
-        // Today's deliveries
-        Delivery::factory()->count(3)->create([
-            'created_at' => now(),
-            'pickup_branch_id' => $branch->id,
-        ]);
-        // This week but not today
-        Delivery::factory()->count(5)->create([
-            'created_at' => now()->subDays(3),
-            'pickup_branch_id' => $branch->id,
-        ]);
-        // Last month
-        Delivery::factory()->count(10)->create([
-            'created_at' => now()->subDays(45),
-            'pickup_branch_id' => $branch->id,
-        ]);
+        try {
+            $owner = $this->owner();
+            $branch = Branch::factory()->create();
 
-        $response = $this->actingAs($owner, 'api')
-            ->getJson('/api/v1/owner/dashboard');
+            // Today's deliveries
+            Delivery::factory()->count(3)->create([
+                'created_at' => now(),
+                'pickup_branch_id' => $branch->id,
+            ]);
+            // This week but not today
+            Delivery::factory()->count(5)->create([
+                'created_at' => now()->subDays(3),
+                'pickup_branch_id' => $branch->id,
+            ]);
+            // Last month
+            Delivery::factory()->count(10)->create([
+                'created_at' => now()->subDays(45),
+                'pickup_branch_id' => $branch->id,
+            ]);
 
-        $response->assertJsonPath('data.deliveries.today_count', 3);
-        // this_week_count = 3 today + 5 mid-week = 8
-        $response->assertJsonPath('data.deliveries.this_week_count', 8);
+            $response = $this->actingAs($owner, 'api')
+                ->getJson('/api/v1/owner/dashboard');
+
+            $response->assertJsonPath('data.deliveries.today_count', 3);
+            // this_week_count = 3 today + 5 mid-week = 8
+            $response->assertJsonPath('data.deliveries.this_week_count', 8);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_counts_delivered_today(): void
@@ -337,13 +343,13 @@ class DashboardControllerTest extends TestCase
     {
         $owner = $this->owner();
 
-        \App\Models\Dispute::factory()->count(3)->create([
-            'status' => \App\Models\Dispute::STATUS_OPEN,
+        Dispute::factory()->count(3)->create([
+            'status' => Dispute::STATUS_OPEN,
         ]);
-        \App\Models\Dispute::factory()->create([
-            'status' => \App\Models\Dispute::STATUS_IN_REVIEW,
+        Dispute::factory()->create([
+            'status' => Dispute::STATUS_IN_REVIEW,
         ]);
-        \App\Models\Dispute::factory()->resolved()->create();
+        Dispute::factory()->resolved()->create();
 
         $response = $this->actingAs($owner, 'api')
             ->getJson('/api/v1/owner/dashboard');

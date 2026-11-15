@@ -136,6 +136,54 @@ class NotificationService
         );
     }
 
+        public function manualPaymentInitiated(Payment $payment): void
+    {
+        $delivery = $payment->delivery;
+        if ($delivery === null) return;
+
+        // Find the Manager of the delivery's pickup branch.
+        $branchId = $delivery->pickup_branch_id;
+        $managers = collect();
+
+        if ($branchId !== null) {
+            $managers = User::query()
+                ->where('branch_id', $branchId)
+                ->where('status', User::STATUS_ACTIVE)
+                ->whereHas('role', fn ($q) => $q->where('name', Role::MANAGER))
+                ->get();
+        }
+
+        // If no branch (Send delivery) or no Manager, notify Owners instead.
+        if ($managers->isEmpty()) {
+            $managers = User::query()
+                ->where('status', User::STATUS_ACTIVE)
+                ->whereHas('role', fn ($q) => $q->where('name', Role::OWNER))
+                ->get();
+        }
+
+        if ($managers->isEmpty()) return;
+
+        $amountLabel = $payment->currency . ' '
+            . number_format((float) $payment->amount, 0);
+
+        $this->notifyMany(
+            users: $managers,
+            type: NotificationType::ManualPaymentInitiated,
+            title: 'Manual payment awaiting approval',
+            body: $amountLabel . ' ' . $payment->method . ' payment recorded '
+                . 'for ' . $delivery->tracking_id . '.',
+            data: array_merge(
+                $this->deliveryPayload($delivery),
+                [
+                    'payment_id' => $payment->id,
+                    'reference'  => $payment->reference,
+                    'action'     => 'open_manual_payment',
+                ],
+            ),
+            channels: ['in_app'],
+        );
+    }
+
     public function deliveryAssigned(Delivery $delivery): void
     {
         $rider = $delivery->rider;
