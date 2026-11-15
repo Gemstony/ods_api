@@ -57,7 +57,7 @@ class NotificationService
             // `pending` until Phase 13.2/13.3 dispatch them.
             if ($channels === ['in_app']) {
                 $notification->update([
-                    'status'  => Notification::STATUS_SENT,
+                    'status' => Notification::STATUS_SENT,
                     'sent_at' => now(),
                 ]);
             }
@@ -66,8 +66,8 @@ class NotificationService
         } catch (\Throwable $e) {
             Log::error('Notification write failed', [
                 'user_id' => $user->id,
-                'type'    => $type->value,
-                'error'   => $e->getMessage(),
+                'type' => $type->value,
+                'error' => $e->getMessage(),
             ]);
             return null;
         }
@@ -91,12 +91,14 @@ class NotificationService
     // Typed event helpers — called from the write-side controllers
     // ═════════════════════════════════════════════════════════
 
-        public function paymentCompleted(Payment $payment): void
+    public function paymentCompleted(Payment $payment): void
     {
         $delivery = $payment->delivery;
-        if ($delivery === null) return;
+        if ($delivery === null)
+            return;
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null) return;
+        if ($distributor === null)
+            return;
 
         $amountLabel = $payment->currency . ' '
             . number_format((float) $payment->amount, 0);
@@ -106,27 +108,29 @@ class NotificationService
             type: NotificationType::PaymentCompleted,
             title: 'Payment received',
             body: "Your payment of {$amountLabel} for "
-                . "{$delivery->tracking_id} was received. The delivery "
-                . "is now ready for pickup.",
+            . "{$delivery->tracking_id} was received. The delivery "
+            . "is now ready for pickup.",
             data: $this->deliveryPayload($delivery),
         );
     }
 
-    
+
     public function paymentFailed(Payment $payment): void
     {
         $delivery = $payment->delivery;
-        if ($delivery === null) return;
+        if ($delivery === null)
+            return;
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null) return;
+        if ($distributor === null)
+            return;
 
         $this->notify(
             user: $distributor,
             type: NotificationType::PaymentFailed,
             title: 'Payment failed',
             body: 'Payment for ' . $delivery->tracking_id
-                . ' failed: ' . ($payment->failure_reason ?? 'unknown error')
-                . '. Tap to try again.',
+            . ' failed: ' . ($payment->failure_reason ?? 'unknown error')
+            . '. Tap to try again.',
             data: $this->deliveryPayload($delivery),
         );
     }
@@ -142,7 +146,7 @@ class NotificationService
                 type: NotificationType::DeliveryAssigned,
                 title: 'New task: ' . $delivery->tracking_id,
                 body: 'A delivery has been assigned to you. '
-                    . 'Accept it from the Tasks tab.',
+                . 'Accept it from the Tasks tab.',
                 data: $this->deliveryPayload($delivery),
             );
         }
@@ -153,7 +157,7 @@ class NotificationService
                 type: NotificationType::DeliveryAssigned,
                 title: 'Rider assigned',
                 body: 'A rider has been assigned to ' . $delivery->tracking_id
-                    . ' and is on the way to pick it up.',
+                . ' and is on the way to pick it up.',
                 data: $this->deliveryPayload($delivery),
             );
         }
@@ -166,7 +170,7 @@ class NotificationService
             NotificationType::DeliveryAccepted,
             'Your rider accepted the delivery',
             'The rider for ' . $delivery->tracking_id . ' has accepted and will '
-                . 'pick up the package shortly.',
+            . 'pick up the package shortly.',
         );
     }
 
@@ -177,7 +181,7 @@ class NotificationService
             NotificationType::DeliveryPickedUp,
             'Package picked up',
             'Your package ' . $delivery->tracking_id . ' has been picked up '
-                . 'and is en route.',
+            . 'and is en route.',
         );
     }
 
@@ -188,7 +192,7 @@ class NotificationService
             NotificationType::DeliveryDispatched,
             'Package dispatched',
             'Your regional package ' . $delivery->tracking_id
-                . ' has been dispatched on the bus / cargo carrier.',
+            . ' has been dispatched on the bus / cargo carrier.',
         );
     }
 
@@ -199,18 +203,19 @@ class NotificationService
             NotificationType::DeliveryDelivered,
             'Package delivered',
             'Your package ' . $delivery->tracking_id . ' has been delivered. '
-                . 'Thank you for using ODS.',
+            . 'Thank you for using ODS.',
         );
     }
 
     public function packageReady(Delivery $delivery): void
     {
-        if ($delivery->pickup_branch_id === null) return;
+        if ($delivery->pickup_branch_id === null)
+            return;
 
         $receivers = User::query()
             ->where('branch_id', $delivery->pickup_branch_id)
             ->where('status', User::STATUS_ACTIVE)
-            ->whereHas('role', fn ($q) => $q->where('name', Role::RECEIVER))
+            ->whereHas('role', fn($q) => $q->where('name', Role::RECEIVER))
             ->get();
 
         $this->notifyMany(
@@ -218,24 +223,40 @@ class NotificationService
             type: NotificationType::PackageReady,
             title: 'Package ready for handover',
             body: $delivery->tracking_id . ' is at the branch and waiting '
-                . 'for a rider to pick it up.',
+            . 'for a rider to pick it up.',
             data: $this->deliveryPayload($delivery),
         );
     }
 
-    public function codeIssued(Delivery $delivery): void
-    {
+    public function codeIssued(
+        Delivery $delivery,
+        string $rawDistributorCode,
+        string $rawRecipientCode,
+    ): void {
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null) return;
+        if ($distributor === null)
+            return;
+
+        $smsBody = sprintf(
+            'ODS codes for %s: DISTRIBUTOR=%s RECIPIENT=%s. Share the '
+            . 'DISTRIBUTOR code at pickup and the RECIPIENT code at '
+            . 'delivery handover.',
+            $delivery->tracking_id,
+            $rawDistributorCode,
+            $rawRecipientCode,
+        );
 
         $this->notify(
             user: $distributor,
             type: NotificationType::CodeIssued,
             title: 'Verification codes issued',
-            body: 'Codes for ' . $delivery->tracking_id . ' have been generated. '
-                . 'Share the DISTRIBUTOR code with the Rider/Receiver at pickup '
-                . 'and the RECIPIENT code with the recipient at handover.',
-            data: $this->deliveryPayload($delivery),
+            body: 'Codes for ' . $delivery->tracking_id . ' have been '
+            . 'generated. Check your SMS for the codes, or open the '
+            . 'delivery detail to view them.',
+            data: array_merge($this->deliveryPayload($delivery), [
+                'sms_message' => $smsBody,
+            ]),
+            channels: ['in_app', 'sms'],
         );
     }
 
@@ -250,7 +271,8 @@ class NotificationService
         ?string $body,
     ): void {
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null) return;
+        if ($distributor === null)
+            return;
 
         $this->notify(
             user: $distributor,
@@ -263,7 +285,8 @@ class NotificationService
 
     private function hasRecent(int $userId, NotificationType $type, ?int $deliveryId): bool
     {
-        if ($deliveryId === null) return false;
+        if ($deliveryId === null)
+            return false;
 
         return Notification::query()
             ->where('user_id', $userId)
@@ -276,10 +299,10 @@ class NotificationService
     private function deliveryPayload(Delivery $delivery): array
     {
         return [
-            'delivery_id'  => $delivery->id,
-            'tracking_id'  => $delivery->tracking_id,
+            'delivery_id' => $delivery->id,
+            'tracking_id' => $delivery->tracking_id,
             'service_type' => $delivery->service_type,
-            'action'       => 'open_delivery',
+            'action' => 'open_delivery',
         ];
     }
 }

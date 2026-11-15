@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -19,22 +20,43 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Force JSON for every API request.
         $middleware->api(prepend: [
             \App\Http\Middleware\ForceJsonResponse::class,
         ]);
 
-        // Named middleware aliases.
-        //   role:owner              → EnsureRole (role gate + status check)
-        //   branch.scope            → EnsureBranchScope (branch access control)
         $middleware->alias([
             'role'         => \App\Http\Middleware\EnsureRole::class,
             'branch.scope' => \App\Http\Middleware\EnsureBranchScope::class,
         ]);
     })
+    ->withSchedule(function (Schedule $schedule) {
+        // ─── Phase 10.3 — delivery orchestration ────────────
+        $schedule->command('ods:batch-pending')
+            ->everyFiveMinutes()
+            ->withoutOverlapping();
+
+        $schedule->command('ods:assign-batched')
+            ->everyTwoMinutes()
+            ->withoutOverlapping();
+
+        $schedule->command('ods:release-expired')
+            ->everyMinute()
+            ->withoutOverlapping();
+
+        // ─── Phase 13.2 — SMS dispatch + reconciliation ─────
+        $schedule->command('ods:dispatch-sms')
+            ->everyMinute()
+            ->withoutOverlapping();
+
+        // Beem requires >=5 min after send before delivery reports are
+        // meaningful. A daily run at 03:30 covers everything from the
+        // previous day; running more often just burns quota.
+        $schedule->command('ods:reconcile-sms')
+            ->dailyAt('03:30')
+            ->withoutOverlapping();
+    })
     ->withExceptions(function (Exceptions $exceptions) {
 
-        // ─── 401 Unauthenticated ─────────────────────────────────────
         $exceptions->render(function (AuthenticationException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -45,7 +67,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── 403 Forbidden ───────────────────────────────────────────
         $exceptions->render(function (AuthorizationException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -56,7 +77,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── 422 Validation ──────────────────────────────────────────
         $exceptions->render(function (ValidationException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -67,7 +87,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── 404 Model not found (route model binding) ───────────────
         $exceptions->render(function (ModelNotFoundException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -78,7 +97,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── 404 Route not found ─────────────────────────────────────
         $exceptions->render(function (NotFoundHttpException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -89,7 +107,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── Other HTTP exceptions (405, 429, 503, …) ────────────────
         $exceptions->render(function (HttpExceptionInterface $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([
@@ -100,7 +117,6 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
-        // ─── Last resort: 500 in production, full trace in debug ────
         $exceptions->render(function (Throwable $e, Request $request) {
             if ($request->is('api/*') && ! config('app.debug')) {
                 return response()->json([

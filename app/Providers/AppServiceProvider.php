@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Services\ClickPesa\ClickPesaClient;
 use App\Services\ClickPesa\ClickPesaTokenProvider;
+use App\Services\Sms\BeemSmsClient;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -30,6 +31,18 @@ class AppServiceProvider extends ServiceProvider
                 connectTimeout: (int) config('clickpesa.connect_timeout', 10),
                 tokenTtlMinutes: (int) config('clickpesa.token_ttl_minutes', 55),
                 tokenProvider: $app->make(ClickPesaTokenProvider::class),
+            );
+        });
+
+        // ─── Beem SMS (Phase 13.2) ──────────────────────────
+        $this->app->singleton(BeemSmsClient::class, function ($app) {
+            return new BeemSmsClient(
+                apiKey: (string) config('beem.api_key', ''),
+                secretKey: (string) config('beem.secret_key', ''),
+                senderId: (string) config('beem.sender_id', ''),
+                baseUrl: (string) config('beem.base_url', 'https://apisms.beem.africa/v1'),
+                timeout: (int) config('beem.timeout', 30),
+                connectTimeout: (int) config('beem.connect_timeout', 10),
             );
         });
     }
