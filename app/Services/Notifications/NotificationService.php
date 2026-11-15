@@ -8,6 +8,7 @@ use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use App\Models\Dispute;
 
 /**
  * Creates user-facing notification rows (Phase 13.1).
@@ -260,6 +261,66 @@ class NotificationService
         );
     }
 
+    public function disputeOpened(Dispute $dispute): void
+    {
+        $owners = User::query()
+            ->where('status', User::STATUS_ACTIVE)
+            ->whereHas('role', fn($q) => $q->where('name', Role::OWNER))
+            ->get();
+
+        if ($owners->isEmpty()) {
+            return;
+        }
+
+        $openerName = $dispute->openedBy?->name ?? 'a user';
+
+        $this->notifyMany(
+            users: $owners,
+            type: NotificationType::DisputeOpened,
+            title: 'New dispute: ' . $dispute->subject,
+            body: 'A ' . $dispute->priority . '-priority '
+            . $dispute->category . ' dispute was opened by '
+            . $openerName . '.',
+            data: $this->disputePayload($dispute),
+            // in_app only — Owners check the dashboard regularly;
+            // per-dispute SMS would add up fast with no real
+            // time pressure on dispute triage.
+            channels: ['in_app'],
+        );
+    }
+
+    public function disputeResolved(Dispute $dispute): void
+    {
+        $statusLabel = $dispute->status === Dispute::STATUS_RESOLVED
+            ? 'resolved'
+            : 'closed';
+
+        $targets = [];
+        $opener = User::find($dispute->opened_by);
+        if ($opener !== null)
+            $targets[] = $opener;
+
+        // If the dispute named a specific user, they should know too.
+        if ($dispute->against_user_id !== null) {
+            $against = User::find($dispute->against_user_id);
+            if ($against !== null)
+                $targets[] = $against;
+        }
+
+        if (empty($targets))
+            return;
+
+        $this->notifyMany(
+            users: $targets,
+            type: NotificationType::DisputeResolved,
+            title: 'Dispute ' . $statusLabel,
+            body: 'Your ' . $dispute->category . ' dispute "'
+            . $dispute->subject . '" was ' . $statusLabel . '.',
+            data: $this->disputePayload($dispute),
+            channels: ['in_app', 'sms'],
+        );
+    }
+
     // ═════════════════════════════════════════════════════════
     // Internals
     // ═════════════════════════════════════════════════════════
@@ -303,6 +364,18 @@ class NotificationService
             'tracking_id' => $delivery->tracking_id,
             'service_type' => $delivery->service_type,
             'action' => 'open_delivery',
+        ];
+    }
+
+        private function disputePayload(Dispute $dispute): array
+    {
+        return [
+            'dispute_id'  => $dispute->id,
+            'delivery_id' => $dispute->delivery_id,
+            'tracking_id' => $dispute->delivery?->tracking_id,
+            'category'    => $dispute->category,
+            'status'      => $dispute->status,
+            'action'      => 'open_dispute',
         ];
     }
 }

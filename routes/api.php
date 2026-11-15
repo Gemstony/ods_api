@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Owner\BranchController;
 use App\Http\Controllers\Api\V1\Owner\BranchManagerController;
 use App\Http\Controllers\Api\V1\Owner\DashboardController;
+use App\Http\Controllers\Api\V1\Owner\DisputeController as OwnerDisputeController;
 use App\Http\Controllers\Api\V1\Owner\EarningLedgerController;
 use App\Http\Controllers\Api\V1\Owner\FinanceController;
 use App\Http\Controllers\Api\V1\Owner\PaymentLedgerController;
@@ -24,12 +25,15 @@ use App\Http\Controllers\Api\V1\Manager\ManagerDashboardController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryController;
 use App\Http\Controllers\Api\V1\Manager\ManagerPackagesController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStaffController;
+use App\Http\Controllers\Api\V1\Manager\DisputeController as ManagerDisputeController;
 use App\Http\Controllers\Api\V1\Distributor\BranchController as DistributorBranchController;
 use App\Http\Controllers\Api\V1\Distributor\DashboardController as DistributorDashboardController;
 use App\Http\Controllers\Api\V1\Distributor\DeliveryController as DistributorDeliveryController;
+use App\Http\Controllers\Api\V1\Distributor\DisputeController as DistributorDisputeController;
 use App\Http\Controllers\Api\V1\Distributor\PaymentController as DistributorPaymentController;
 use App\Http\Controllers\Api\V1\Distributor\RewardsController as DistributorRewardsController;
 use App\Http\Controllers\Api\V1\Distributor\VerificationController as DistributorVerificationController;
+use App\Http\Controllers\Api\V1\Rider\DisputeController as RiderDisputeController;
 use App\Http\Controllers\Api\V1\Rider\RiderAvailabilityController;
 use App\Http\Controllers\Api\V1\Rider\RiderDashboardController;
 use App\Http\Controllers\Api\V1\Rider\RiderDeliveryController;
@@ -61,7 +65,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/settings/public', [PublicSettingsController::class, 'index'])
         ->middleware('throttle:60,1');
 
-    // ─── Notifications (Phase 13.1 — role-agnostic) ──────────
+    // ─── Notifications (Phase 13.1) ──────────────────────────
     Route::middleware('auth:api')->group(function () {
         Route::get('/notifications', [NotificationController::class, 'index']);
         Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
@@ -69,6 +73,7 @@ Route::prefix('v1')->group(function () {
         Route::patch('/notifications/{notification}/dismiss', [NotificationController::class, 'dismiss']);
     });
 
+    // ─── Owner (Phase 5 + ledger 11.4 + disputes 13.4) ───────
     Route::middleware(['auth:api', 'role:owner'])
         ->prefix('owner')
         ->group(function () {
@@ -104,8 +109,17 @@ Route::prefix('v1')->group(function () {
 
             Route::post('ledger/reconcile', [ReconciliationController::class, 'reconcile']);
             Route::get('ledger/reconcile/last', [ReconciliationController::class, 'last']);
+
+            // Disputes (Phase 13.4)
+            Route::get('disputes', [OwnerDisputeController::class, 'index']);
+            Route::get('disputes/{dispute}', [OwnerDisputeController::class, 'show']);
+            Route::post('disputes/{dispute}/review', [OwnerDisputeController::class, 'startReview']);
+            Route::post('disputes/{dispute}/resolve', [OwnerDisputeController::class, 'resolve']);
+            Route::post('disputes/{dispute}/close', [OwnerDisputeController::class, 'close']);
+            Route::post('disputes/{dispute}/escalate', [OwnerDisputeController::class, 'escalate']);
         });
 
+    // ─── Manager (Phase 6 + disputes 13.4) ───────────────────
     Route::middleware(['auth:api', 'role:manager'])
         ->prefix('manager')
         ->group(function () {
@@ -124,8 +138,13 @@ Route::prefix('v1')->group(function () {
             Route::post('batching/run', [ManagerBatchingController::class, 'run']);
             Route::post('assignment/run', [ManagerAssignmentController::class, 'run']);
             Route::post('assignment/release-expired', [ManagerAssignmentController::class, 'releaseExpired']);
+
+            Route::get('disputes', [ManagerDisputeController::class, 'index']);
+            Route::post('disputes', [ManagerDisputeController::class, 'store']);
+            Route::get('disputes/{dispute}', [ManagerDisputeController::class, 'show']);
         });
 
+    // ─── Distributor (Phase 7 + payments 11.5 + verification 12.3 + disputes 13.4) ───
     Route::middleware(['auth:api', 'role:distributor'])
         ->prefix('distributor')
         ->group(function () {
@@ -144,11 +163,16 @@ Route::prefix('v1')->group(function () {
                 'deliveries/{delivery}/verification/issue',
                 [DistributorVerificationController::class, 'issue'],
             )->middleware('throttle:10,1');
+
+            Route::get('disputes', [DistributorDisputeController::class, 'index']);
+            Route::post('disputes', [DistributorDisputeController::class, 'store']);
+            Route::get('disputes/{dispute}', [DistributorDisputeController::class, 'show']);
         });
 
     Route::middleware(['auth:api', 'role:distributor'])
         ->get('/rewards/me', [DistributorRewardsController::class, 'show']);
 
+    // ─── Rider (Phase 8 + disputes 13.4) ─────────────────────
     Route::middleware(['auth:api', 'role:rider'])
         ->prefix('rider')
         ->group(function () {
@@ -161,8 +185,13 @@ Route::prefix('v1')->group(function () {
             Route::post('deliveries/{delivery}/deliver', [RiderDeliveryController::class, 'deliver']);
             Route::get('queue-status', [RiderAvailabilityController::class, 'show']);
             Route::patch('availability', [RiderAvailabilityController::class, 'update']);
+
+            Route::get('disputes', [RiderDisputeController::class, 'index']);
+            Route::post('disputes', [RiderDisputeController::class, 'store']);
+            Route::get('disputes/{dispute}', [RiderDisputeController::class, 'show']);
         });
 
+    // ─── Receiver (Phase 9) ──────────────────────────────────
     Route::middleware(['auth:api', 'role:receiver'])
         ->prefix('receiver')
         ->group(function () {
