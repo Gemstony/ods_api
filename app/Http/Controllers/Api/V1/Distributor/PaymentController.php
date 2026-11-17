@@ -102,7 +102,9 @@ class PaymentController extends Controller
     public function show(Request $request, int $payment): JsonResponse
     {
         $model = $this->resolveOwnedPayment($request, $payment);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
 
         return $this->success(
             data: $this->paymentPayload($model),
@@ -113,7 +115,9 @@ class PaymentController extends Controller
     public function refresh(Request $request, int $payment): JsonResponse
     {
         $model = $this->resolveOwnedPayment($request, $payment);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
 
         // Manual payments don't touch ClickPesa — no sync needed.
         // Return the current state (which may have changed if a Manager
@@ -145,6 +149,7 @@ class PaymentController extends Controller
         if ($model === null) {
             return $this->error('Payment not found.', null, 404);
         }
+
         return $model;
     }
 
@@ -155,28 +160,29 @@ class PaymentController extends Controller
             : $payment->delivery()->first();
 
         $payload = [
-            'id'                 => $payment->id,
-            'delivery_id'        => $payment->delivery_id,
-            'delivery_status'    => $delivery?->status,
-            'stage'              => $payment->stage,
-            'amount'             => (float) $payment->amount,
-            'currency'           => $payment->currency,
-            'method'             => $payment->method,
-            'status'             => $payment->status,
-            'reference'          => $payment->reference,
+            'id' => $payment->id,
+            'delivery_id' => $payment->delivery_id,
+            'delivery_status' => $delivery?->status,
+            'stage' => $payment->stage,
+            'amount' => (float) $payment->amount,
+            'currency' => $payment->currency,
+            'method' => $payment->method,
+            'status' => $payment->status,
+            'reference' => $payment->reference,
             'provider_reference' => $payment->provider_reference,
-            'initiated_at'       => $payment->initiated_at?->toIso8601String(),
-            'paid_at'            => $payment->paid_at?->toIso8601String(),
-            'failed_at'          => $payment->failed_at?->toIso8601String(),
-            'expires_at'         => $payment->expires_at?->toIso8601String(),
-            'failure_reason'     => $payment->failure_reason,
+            'initiated_by' => $payment->initiated_by,  // ← was missing
+            'initiated_at' => $payment->initiated_at?->toIso8601String(),
+            'paid_at' => $payment->paid_at?->toIso8601String(),
+            'failed_at' => $payment->failed_at?->toIso8601String(),
+            'expires_at' => $payment->expires_at?->toIso8601String(),
+            'failure_reason' => $payment->failure_reason,
         ];
 
         if ($includeUssd) {
             $raw = $payment->metadata['clickpesa_response'] ?? [];
             $payload['ussd'] = [
                 'provider_status' => $raw['status'] ?? 'PENDING',
-                'message'         => $raw['message']
+                'message' => $raw['message']
                     ?? 'A USSD prompt has been sent to your phone. Enter your PIN to confirm.',
             ];
         }

@@ -26,9 +26,9 @@ class VerificationCodeServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        (new RoleSeeder())->run();
-        (new PricingConfigSeeder())->run();
-        (new SettingsSeeder())->run();
+        (new RoleSeeder)->run();
+        (new PricingConfigSeeder)->run();
+        (new SettingsSeeder)->run();
     }
 
     protected function service(): VerificationCodeService
@@ -167,6 +167,36 @@ class VerificationCodeServiceTest extends TestCase
 
         $first->refresh();
         $this->assertNotNull($first->verified_at);
+    }
+
+    public function test_verification_uses_newest_code_id_not_timestamp_order(): void
+    {
+        $delivery = $this->makeDelivery();
+        $distributor = User::find($delivery->distributor_id);
+        $rider = $this->verifier();
+
+        [$oldCode] = $this->service()->issueForDelivery(
+            $delivery,
+            VerificationCode::TYPE_RECIPIENT,
+            $distributor,
+        );
+        [, $newRawCode] = $this->service()->issueForDelivery(
+            $delivery,
+            VerificationCode::TYPE_RECIPIENT,
+            $distributor,
+        );
+
+        // Simulate timestamp conversion between the PHP process and MySQL.
+        $oldCode->update(['issued_at' => now()->addDay()]);
+
+        $result = $this->service()->verify(
+            $delivery,
+            VerificationCode::TYPE_RECIPIENT,
+            $newRawCode,
+            $rider,
+        );
+
+        $this->assertSame(VerificationOutcome::Success, $result->outcome);
     }
 
     public function test_issue_throws_on_terminal_delivery(): void
@@ -617,6 +647,7 @@ class VerificationCodeServiceTest extends TestCase
     {
         $first = (int) $sixDigitCode[0];
         $flipped = ($first + 1) % 10;
-        return $flipped . substr($sixDigitCode, 1);
+
+        return $flipped.substr($sixDigitCode, 1);
     }
 }

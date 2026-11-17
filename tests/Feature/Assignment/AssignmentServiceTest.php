@@ -243,6 +243,49 @@ class AssignmentServiceTest extends TestCase
         $this->assertSame(0, $result->assignmentsMade);
     }
 
+    public function test_releases_expired_assignment_and_requeues_rider_and_delivery(): void
+    {
+        $branch = $this->branch();
+        $rider = $this->rider($branch);
+        $delivery = Delivery::factory()->create([
+            'pickup_branch_id' => $branch->id,
+            'service_type' => Delivery::SERVICE_RECEIVE,
+            'status' => Delivery::STATUS_ASSIGNED,
+            'rider_id' => $rider->id,
+            'assigned_at' => now()->subMinutes(6),
+            'assignment_expires_at' => now()->subMinute(),
+        ]);
+        $rider->markBusy();
+
+        $released = $this->service()->releaseExpiredAssignments();
+
+        $this->assertSame(1, $released);
+        $this->assertDatabaseHas('deliveries', [
+            'id' => $delivery->id,
+            'status' => Delivery::STATUS_BATCHED,
+            'rider_id' => null,
+            'assigned_at' => null,
+            'assignment_expires_at' => null,
+        ]);
+        $this->assertTrue($rider->fresh()->is_available);
+    }
+
+    public function test_does_not_release_unexpired_assignment(): void
+    {
+        $branch = $this->branch();
+        $rider = $this->rider($branch);
+        $delivery = Delivery::factory()->create([
+            'pickup_branch_id' => $branch->id,
+            'service_type' => Delivery::SERVICE_RECEIVE,
+            'status' => Delivery::STATUS_ASSIGNED,
+            'rider_id' => $rider->id,
+            'assignment_expires_at' => now()->addMinute(),
+        ]);
+
+        $this->assertSame(0, $this->service()->releaseExpiredAssignments());
+        $this->assertSame(Delivery::STATUS_ASSIGNED, $delivery->fresh()->status);
+    }
+
     // ─── Timeout setting ────────────────────────────────────
     public function test_uses_default_timeout_of_five_minutes(): void
     {

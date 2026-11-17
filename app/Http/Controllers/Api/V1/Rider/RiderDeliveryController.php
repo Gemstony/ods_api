@@ -8,6 +8,7 @@ use App\Models\Delivery;
 use App\Models\VerificationCode;
 use App\Services\Audit\AuditLogger;
 use App\Services\Compensation\CompensationService;
+use App\Services\Notifications\NotificationService;
 use App\Services\Verification\VerificationCodeService;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -30,9 +31,8 @@ class RiderDeliveryController extends Controller
         private readonly AuditLogger $auditLogger,
         private readonly CompensationService $compensation,
         private readonly VerificationCodeService $verification,
-        private readonly \App\Services\Notifications\NotificationService $notifications,
-    ) {
-    }
+        private readonly NotificationService $notifications,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -57,7 +57,7 @@ class RiderDeliveryController extends Controller
                 Delivery::STATUS_EXPIRED,
             ];
             $filtered = array_values(array_intersect($requested, $valid));
-            if (!empty($filtered)) {
+            if (! empty($filtered)) {
                 $query->whereIn('status', $filtered);
             }
         }
@@ -103,7 +103,7 @@ class RiderDeliveryController extends Controller
             ->where('id', $delivery)
             ->first();
 
-        if (!$model) {
+        if (! $model) {
             return $this->error('Delivery not found.', null, 404);
         }
 
@@ -169,7 +169,7 @@ class RiderDeliveryController extends Controller
             ->where('rider_id', $riderId)
             ->first();
 
-        if (!$delivery) {
+        if (! $delivery) {
             return $this->error('Delivery not found.', null, 404);
         }
 
@@ -203,7 +203,9 @@ class RiderDeliveryController extends Controller
         $delivery->save();
 
         if ($markRiderAvailable) {
-            $request->user()->markAvailable();
+            if ($request->user()->currentDelivery() === null) {
+                $request->user()->markAvailable();
+            }
 
             try {
                 $this->compensation->awardForDeliveredDelivery($delivery);
@@ -276,7 +278,7 @@ class RiderDeliveryController extends Controller
             $request->user(),
         );
 
-        if (!$result->isSuccess()) {
+        if (! $result->isSuccess()) {
             return $this->error(
                 $result->outcome->message(),
                 array_merge($result->toArray(), [

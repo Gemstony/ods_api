@@ -19,7 +19,7 @@ class AssignmentResult
 
     public int $deliveriesSkipped;
 
-    /** @var array<int, array{delivery_id:int, rider_id:int, rider_name:string, expires_at:string}> */
+    /** @var array<int, array{delivery_id:int, rider_id:int, rider_name:string, expires_at:string, assignment_group_id:?string}> */
     public array $assignments;
 
     public ?Carbon $runAt;

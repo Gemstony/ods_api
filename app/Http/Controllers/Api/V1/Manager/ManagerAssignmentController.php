@@ -46,4 +46,25 @@ class ManagerAssignmentController extends Controller
                 : 'Assignment run completed.',
         );
     }
+
+    public function releaseExpired(Request $request): JsonResponse
+    {
+        $branchId = $request->user()->branch_id;
+        if ($branchId === null) {
+            return $this->error(
+                'Your account is not assigned to a branch.',
+                null,
+                403,
+            );
+        }
+
+        $released = $this->assignmentService->releaseExpiredAssignments(
+            branchId: (int) $branchId,
+        );
+
+        return $this->success(
+            data: ['released' => $released],
+            message: 'Expired assignments released.',
+        );
+    }
 }

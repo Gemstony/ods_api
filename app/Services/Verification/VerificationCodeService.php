@@ -78,10 +78,10 @@ class VerificationCodeService
             subject: $model,
             changes: [
                 'delivery_id' => $delivery->id,
-                'code_type'   => $codeType,
-                'issued_to'   => $issuedTo->id,
-                'ttl_hours'   => $effectiveTtl,
-                'expires_at'  => $model->expires_at?->toIso8601String(),
+                'code_type' => $codeType,
+                'issued_to' => $issuedTo->id,
+                'ttl_hours' => $effectiveTtl,
+                'expires_at' => $model->expires_at?->toIso8601String(),
             ],
         );
 
@@ -96,12 +96,19 @@ class VerificationCodeService
     {
         $code = $this->latestCodeFor($delivery, $codeType);
 
-        if ($code === null) return VerificationReadiness::NoCode;
-        if ($code->verified_at !== null) return VerificationReadiness::AlreadyVerified;
-        if ($code->isExpired()) return VerificationReadiness::Expired;
+        if ($code === null) {
+            return VerificationReadiness::NoCode;
+        }
+        if ($code->verified_at !== null) {
+            return VerificationReadiness::AlreadyVerified;
+        }
+        if ($code->isExpired()) {
+            return VerificationReadiness::Expired;
+        }
         if ($code->attempt_count >= $this->maxAttempts()) {
             return VerificationReadiness::LockedOut;
         }
+
         return VerificationReadiness::Ready;
     }
 
@@ -127,7 +134,8 @@ class VerificationCodeService
             /** @var VerificationCode|null $code */
             $code = VerificationCode::where('delivery_id', $delivery->id)
                 ->where('code_type', $codeType)
-                ->orderByDesc('issued_at')
+                // IDs are monotonic and avoid timestamp ordering errors
+                // when the database and PHP process use different timezones.
                 ->orderByDesc('id')
                 ->lockForUpdate()
                 ->first();
@@ -207,7 +215,7 @@ class VerificationCodeService
             ->whereNull('verified_at')
             ->where(function ($q) {
                 $q->whereNull('expires_at')
-                  ->orWhere('expires_at', '>', now());
+                    ->orWhere('expires_at', '>', now());
             })
             ->update(['expires_at' => now()]);
 
@@ -292,7 +300,6 @@ class VerificationCodeService
     {
         return VerificationCode::where('delivery_id', $delivery->id)
             ->where('code_type', $codeType)
-            ->orderByDesc('issued_at')
             ->orderByDesc('id')
             ->first();
     }
@@ -340,9 +347,9 @@ class VerificationCodeService
             ),
             subject: $result->code,
             changes: [
-                'delivery_id'        => $delivery->id,
-                'code_type'          => $codeType,
-                'outcome'            => $result->outcome->value,
+                'delivery_id' => $delivery->id,
+                'code_type' => $codeType,
+                'outcome' => $result->outcome->value,
                 'remaining_attempts' => $result->remainingAttempts,
             ],
         );

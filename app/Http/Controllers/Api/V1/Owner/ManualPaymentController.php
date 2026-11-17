@@ -42,21 +42,21 @@ class ManualPaymentController extends Controller
         $items = [];
         foreach ($paginated->items() as $payment) {
             $items[] = [
-                'id'           => $payment->id,
-                'reference'    => $payment->reference,
-                'amount'       => (float) $payment->amount,
-                'currency'     => $payment->currency,
-                'method'       => $payment->method,
-                'stage'        => $payment->stage,
+                'id' => $payment->id,
+                'reference' => $payment->reference,
+                'amount' => (float) $payment->amount,
+                'currency' => $payment->currency,
+                'method' => $payment->method,
+                'stage' => $payment->stage,
                 'initiated_at' => $payment->initiated_at?->toIso8601String(),
-                'delivery'     => $payment->delivery === null ? null : [
-                    'id'           => $payment->delivery->id,
-                    'tracking_id'  => $payment->delivery->tracking_id,
+                'delivery' => $payment->delivery === null ? null : [
+                    'id' => $payment->delivery->id,
+                    'tracking_id' => $payment->delivery->tracking_id,
                     'service_type' => $payment->delivery->service_type,
-                    'status'       => $payment->delivery->status,
+                    'status' => $payment->delivery->status,
                 ],
                 'initiated_by' => $payment->initiatedBy === null ? null : [
-                    'id'   => $payment->initiatedBy->id,
+                    'id' => $payment->initiatedBy->id,
                     'name' => $payment->initiatedBy->name,
                 ],
             ];
@@ -77,7 +77,9 @@ class ManualPaymentController extends Controller
     public function approve(Request $request, int $payment): JsonResponse
     {
         $model = $this->resolvePayment($payment);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
 
         try {
             $approved = $this->payments->approveManualPayment(
@@ -97,7 +99,9 @@ class ManualPaymentController extends Controller
     public function reject(RejectManualPaymentRequest $request, int $payment): JsonResponse
     {
         $model = $this->resolvePayment($payment);
-        if ($model instanceof JsonResponse) return $model;
+        if ($model instanceof JsonResponse) {
+            return $model;
+        }
 
         try {
             $rejected = $this->payments->rejectManualPayment(
@@ -125,27 +129,30 @@ class ManualPaymentController extends Controller
         if ($model === null) {
             return $this->error('Payment not found.', null, 404);
         }
+
         return $model;
     }
 
     private function payload(Payment $payment): array
     {
         $delivery = $payment->delivery;
+
         return [
-            'id'             => $payment->id,
-            'reference'      => $payment->reference,
-            'amount'         => (float) $payment->amount,
-            'currency'       => $payment->currency,
-            'method'         => $payment->method,
-            'stage'          => $payment->stage,
-            'status'         => $payment->status,
+            'id' => $payment->id,
+            'reference' => $payment->reference,
+            'amount' => (float) $payment->amount,
+            'currency' => $payment->currency,
+            'method' => $payment->method,
+            'stage' => $payment->stage,
+            'initiated_by' => $payment->initiated_by,  // ← was missing
+            'status' => $payment->status,
             'failure_reason' => $payment->failure_reason,
-            'paid_at'        => $payment->paid_at?->toIso8601String(),
-            'failed_at'      => $payment->failed_at?->toIso8601String(),
-            'delivery'       => $delivery === null ? null : [
-                'id'           => $delivery->id,
-                'tracking_id'  => $delivery->tracking_id,
-                'status'       => $delivery->status,
+            'paid_at' => $payment->paid_at?->toIso8601String(),
+            'failed_at' => $payment->failed_at?->toIso8601String(),
+            'delivery' => $delivery === null ? null : [
+                'id' => $delivery->id,
+                'tracking_id' => $delivery->tracking_id,
+                'status' => $delivery->status,
             ],
         ];
     }

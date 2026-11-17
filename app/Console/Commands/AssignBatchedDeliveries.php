@@ -37,8 +37,9 @@ class AssignBatchedDeliveries extends Command
         }
 
         $this->info(sprintf(
-            'Assigned %d deliveries to riders (unassigned: %d, skipped: %d).',
+            'Assigned %d deliveries across %d riders (unassigned: %d, skipped: %d).',
             $result->assignmentsMade,
+            count(array_unique(array_column($result->assignments, 'rider_id'))),
             $result->deliveriesUnassigned,
             $result->deliveriesSkipped,
         ));
@@ -47,10 +48,13 @@ class AssignBatchedDeliveries extends Command
             $this->line('Assignments:');
             foreach ($result->assignments as $a) {
                 $this->line(sprintf(
-                    '  - delivery #%d → rider #%d (%s), expires %s',
+                    '  - delivery #%d → rider #%d (%s)%s, expires %s',
                     $a['delivery_id'],
                     $a['rider_id'],
                     $a['rider_name'],
+                    $a['assignment_group_id'] === null
+                        ? ''
+                        : ' [group '.$a['assignment_group_id'].']',
                     $a['expires_at'],
                 ));
             }
