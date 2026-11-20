@@ -43,11 +43,11 @@ class SmsDispatcher
 
         if ($senderId === '' || strtoupper($senderId) === 'INFO') {
             $reason = 'Sender ID is not configured (or is the deactivated INFO default). '
-                . 'Register an approved sender in the Beem dashboard and set BEEM_SENDER_ID.';
+                .'Register an approved sender in the Beem dashboard and set BEEM_SENDER_ID.';
 
             $this->auditLogger->logSystem(
                 action: 'sms.dispatch_blocked',
-                description: 'SMS dispatch skipped: ' . $reason,
+                description: 'SMS dispatch skipped: '.$reason,
             );
 
             return [
@@ -60,15 +60,13 @@ class SmsDispatcher
 
         $pending = Notification::query()
             ->where('status', Notification::STATUS_PENDING)
-            ->whereNull('dismissed_at')
-            ->whereNull('read_at')
+            ->whereJsonContains('channels', 'sms')
             ->where(function ($q) {
                 $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
             })
             ->orderBy('created_at')
             ->limit($limit)
-            ->get()
-            ->filter(fn (Notification $n) => in_array('sms', $n->channels ?? [], true));
+            ->get();
 
         $dispatched = 0;
         $failed = 0;
@@ -82,6 +80,7 @@ class SmsDispatcher
                     $this->markFailed($notification, 'User has no usable phone number.');
                 }
                 $failed++;
+
                 continue;
             }
 
@@ -91,6 +90,7 @@ class SmsDispatcher
                     $this->markFailed($notification, 'Phone number is not in valid 255XXXXXXXXX format.');
                 }
                 $failed++;
+
                 continue;
             }
 
@@ -100,11 +100,13 @@ class SmsDispatcher
                     $this->markFailed($notification, 'Notification has no resolvable message body.');
                 }
                 $failed++;
+
                 continue;
             }
 
             if ($dryRun) {
                 $dispatched++;
+
                 continue;
             }
 
@@ -119,24 +121,33 @@ class SmsDispatcher
                 );
 
                 $notification->update([
-                    'status'  => Notification::STATUS_SENT,
+                    'status' => Notification::STATUS_SENT,
                     'sent_at' => now(),
-                    'data'    => array_merge($notification->data ?? [], [
+                    'data' => array_merge($notification->data ?? [], [
                         'sms_beem_request_id' => $result['beem_request_id'],
+                        'sms_beem_response' => $result['response'],
+                        'sms_beem_log_id' => $result['log_id'] ?? null,
                         'sms_dest_addr_masked' => $this->maskPhone($destAddr),
                     ]),
                 ]);
 
                 $dispatched++;
             } catch (BeemSmsException $e) {
-                $this->markFailed($notification, $e->getMessage(), $e->beemCode);
+                $this->markFailed(
+                    $notification,
+                    $e->getMessage(),
+                    $e->beemCode,
+                    $e->responseBody,
+                    $e->httpStatus,
+                    $e->logId,
+                );
                 $failed++;
             } catch (\Throwable $e) {
                 Log::error('SMS dispatch unexpected failure', [
                     'notification_id' => $notification->id,
                     'error' => $e->getMessage(),
                 ]);
-                $this->markFailed($notification, 'Unexpected error: ' . $e->getMessage());
+                $this->markFailed($notification, 'Unexpected error: '.$e->getMessage());
                 $failed++;
             }
         }
@@ -203,12 +214,14 @@ class SmsDispatcher
     private function normalizePhone(string $raw): ?string
     {
         $t = preg_replace('/\s+/', '', $raw);
-        if ($t === null) return null;
+        if ($t === null) {
+            return null;
+        }
 
         if (str_starts_with($t, '+255') && strlen($t) === 13) {
             $t = substr($t, 1);
         } elseif (str_starts_with($t, '0') && strlen($t) === 10) {
-            $t = '255' . substr($t, 1);
+            $t = '255'.substr($t, 1);
         }
 
         return preg_match('/^255\d{9}$/', $t) === 1 ? $t : null;
@@ -216,19 +229,40 @@ class SmsDispatcher
 
     private function maskPhone(string $phone): string
     {
-        if (strlen($phone) < 6) return '***';
-        return substr($phone, 0, 3) . '***' . substr($phone, -3);
+        if (strlen($phone) < 6) {
+            return '***';
+        }
+
+        return substr($phone, 0, 3).'***'.substr($phone, -3);
     }
 
-    private function markFailed(Notification $notification, string $reason, ?int $beemCode = null): void
-    {
+    private function markFailed(
+        Notification $notification,
+        string $reason,
+        ?int $beemCode = null,
+        ?array $response = null,
+        ?int $httpStatus = null,
+        ?int $logId = null,
+    ): void {
+        $data = array_merge($notification->data ?? [], [
+            'sms_error' => substr($reason, 0, 250),
+            'sms_beem_code' => $beemCode,
+            'sms_failed_at' => now()->toIso8601String(),
+        ]);
+
+        if ($response !== null) {
+            $data['sms_beem_response'] = $response;
+        }
+        if ($httpStatus !== null) {
+            $data['sms_http_status'] = $httpStatus;
+        }
+        if ($logId !== null) {
+            $data['sms_beem_log_id'] = $logId;
+        }
+
         $notification->update([
             'status' => Notification::STATUS_FAILED,
-            'data'   => array_merge($notification->data ?? [], [
-                'sms_error'      => substr($reason, 0, 250),
-                'sms_beem_code'  => $beemCode,
-                'sms_failed_at'  => now()->toIso8601String(),
-            ]),
+            'data' => $data,
         ]);
     }
 }

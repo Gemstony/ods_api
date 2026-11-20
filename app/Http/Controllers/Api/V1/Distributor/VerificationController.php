@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api\V1\Distributor;
 use App\Http\Controllers\Controller;
 use App\Models\Delivery;
 use App\Models\VerificationCode;
+use App\Services\Notifications\NotificationService;
 use App\Services\Verification\VerificationCodeService;
 use App\Services\Verification\VerificationException;
 use App\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Distributor-issued verification codes (Phase 12.2).
@@ -30,9 +32,8 @@ class VerificationController extends Controller
 
     public function __construct(
         private readonly VerificationCodeService $verification,
-        private readonly \App\Services\Notifications\NotificationService $notifications,
-    ) {
-    }
+        private readonly NotificationService $notifications,
+    ) {}
 
     public function issue(Request $request, int $delivery): JsonResponse
     {
@@ -60,9 +61,9 @@ class VerificationController extends Controller
         }
 
         try {
-            $this->notifications->codeIssued($model);
+            $this->notifications->codeIssued($model, $distRaw, $recipRaw);
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error(
+            Log::error(
                 'Notification write after code issue failed',
                 ['delivery_id' => $model->id, 'error' => $e->getMessage()],
             );
@@ -83,8 +84,8 @@ class VerificationController extends Controller
                     ],
                 ],
                 'warning' => 'The raw codes are returned once and never recoverable. '
-                    . 'Share the DISTRIBUTOR_CODE with the Receiver or Rider at pickup, '
-                    . 'and the RECIPIENT_CODE with the recipient before delivery.',
+                    .'Share the DISTRIBUTOR_CODE with the Receiver or Rider at pickup, '
+                    .'and the RECIPIENT_CODE with the recipient before delivery.',
             ],
             message: 'Verification codes issued. Save them — they will not be shown again.',
         );

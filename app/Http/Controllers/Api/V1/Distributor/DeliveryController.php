@@ -268,8 +268,8 @@ class DeliveryController extends Controller
         }
 
         // Local: compute distance
-        if ($serviceType === Delivery::SERVICE_RECEIVE) {
-            // Pickup is the branch
+        if ($serviceType === Delivery::SERVICE_RECEIVE || ($serviceType === Delivery::SERVICE_SEND && $pickupBranchId !== null)) {
+            // Receive always starts at a branch; Send may optionally do so.
             $branch = Branch::findOrFail($pickupBranchId);
             $startLat = (float) $branch->latitude;
             $startLng = (float) $branch->longitude;

@@ -3,12 +3,12 @@
 namespace App\Services\Notifications;
 
 use App\Models\Delivery;
+use App\Models\Dispute;
 use App\Models\Notification;
 use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
-use App\Models\Dispute;
 
 /**
  * Creates user-facing notification rows (Phase 13.1).
@@ -33,7 +33,7 @@ class NotificationService
         string $title,
         ?string $body = null,
         array $data = [],
-        array $channels = ['in_app'],
+        array $channels = ['in_app', 'sms'],
         ?string $priority = null,
     ): ?Notification {
         try {
@@ -42,6 +42,12 @@ class NotificationService
             if ($type->isTerminal() && $this->hasRecent($user->id, $type, $deliveryId)) {
                 return null;
             }
+
+            // All user-facing notifications are sent in-app and by SMS.
+            // Keeping this policy here prevents an event helper from
+            // accidentally marking an unsent SMS as sent by omitting its
+            // channels argument.
+            $channels = array_values(array_unique([...$channels, 'in_app', 'sms']));
 
             $notification = Notification::send(
                 user: $user,
@@ -53,16 +59,6 @@ class NotificationService
                 priority: $priority ?? $type->defaultPriority(),
             );
 
-            // In-app-only notifications are "sent" as soon as written —
-            // the app reads them from the same endpoint. SMS/push keep
-            // `pending` until Phase 13.2/13.3 dispatch them.
-            if ($channels === ['in_app']) {
-                $notification->update([
-                    'status' => Notification::STATUS_SENT,
-                    'sent_at' => now(),
-                ]);
-            }
-
             return $notification;
         } catch (\Throwable $e) {
             Log::error('Notification write failed', [
@@ -70,6 +66,7 @@ class NotificationService
                 'type' => $type->value,
                 'error' => $e->getMessage(),
             ]);
+
             return null;
         }
     }
@@ -80,7 +77,7 @@ class NotificationService
         string $title,
         ?string $body = null,
         array $data = [],
-        array $channels = ['in_app'],
+        array $channels = ['in_app', 'sms'],
         ?string $priority = null,
     ): void {
         foreach ($users as $user) {
@@ -95,51 +92,56 @@ class NotificationService
     public function paymentCompleted(Payment $payment): void
     {
         $delivery = $payment->delivery;
-        if ($delivery === null)
+        if ($delivery === null) {
             return;
+        }
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null)
+        if ($distributor === null) {
             return;
+        }
 
-        $amountLabel = $payment->currency . ' '
-            . number_format((float) $payment->amount, 0);
+        $amountLabel = $payment->currency.' '
+            .number_format((float) $payment->amount, 0);
 
         $this->notify(
             user: $distributor,
             type: NotificationType::PaymentCompleted,
             title: 'Payment received',
             body: "Your payment of {$amountLabel} for "
-            . "{$delivery->tracking_id} was received. The delivery "
-            . "is now ready for pickup.",
+            ."{$delivery->tracking_id} was received. The delivery "
+            .'is now ready for pickup.',
             data: $this->deliveryPayload($delivery),
         );
     }
 
-
     public function paymentFailed(Payment $payment): void
     {
         $delivery = $payment->delivery;
-        if ($delivery === null)
+        if ($delivery === null) {
             return;
+        }
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null)
+        if ($distributor === null) {
             return;
+        }
 
         $this->notify(
             user: $distributor,
             type: NotificationType::PaymentFailed,
             title: 'Payment failed',
-            body: 'Payment for ' . $delivery->tracking_id
-            . ' failed: ' . ($payment->failure_reason ?? 'unknown error')
-            . '. Tap to try again.',
+            body: 'Payment for '.$delivery->tracking_id
+            .' failed: '.($payment->failure_reason ?? 'unknown error')
+            .'. Tap to try again.',
             data: $this->deliveryPayload($delivery),
         );
     }
 
-        public function manualPaymentInitiated(Payment $payment): void
+    public function manualPaymentInitiated(Payment $payment): void
     {
         $delivery = $payment->delivery;
-        if ($delivery === null) return;
+        if ($delivery === null) {
+            return;
+        }
 
         // Find the Manager of the delivery's pickup branch.
         $branchId = $delivery->pickup_branch_id;
@@ -161,26 +163,28 @@ class NotificationService
                 ->get();
         }
 
-        if ($managers->isEmpty()) return;
+        if ($managers->isEmpty()) {
+            return;
+        }
 
-        $amountLabel = $payment->currency . ' '
-            . number_format((float) $payment->amount, 0);
+        $amountLabel = $payment->currency.' '
+            .number_format((float) $payment->amount, 0);
 
         $this->notifyMany(
             users: $managers,
             type: NotificationType::ManualPaymentInitiated,
             title: 'Manual payment awaiting approval',
-            body: $amountLabel . ' ' . $payment->method . ' payment recorded '
-                . 'for ' . $delivery->tracking_id . '.',
+            body: $amountLabel.' '.$payment->method.' payment recorded '
+                .'for '.$delivery->tracking_id.'.',
             data: array_merge(
                 $this->deliveryPayload($delivery),
                 [
                     'payment_id' => $payment->id,
-                    'reference'  => $payment->reference,
-                    'action'     => 'open_manual_payment',
+                    'reference' => $payment->reference,
+                    'action' => 'open_manual_payment',
                 ],
             ),
-            channels: ['in_app'],
+            channels: ['in_app', 'sms'],
         );
     }
 
@@ -193,9 +197,9 @@ class NotificationService
             $this->notify(
                 user: $rider,
                 type: NotificationType::DeliveryAssigned,
-                title: 'New task: ' . $delivery->tracking_id,
+                title: 'New task: '.$delivery->tracking_id,
                 body: 'A delivery has been assigned to you. '
-                . 'Accept it from the Tasks tab.',
+                .'Accept it from the Tasks tab.',
                 data: $this->deliveryPayload($delivery),
             );
         }
@@ -205,8 +209,8 @@ class NotificationService
                 user: $distributor,
                 type: NotificationType::DeliveryAssigned,
                 title: 'Rider assigned',
-                body: 'A rider has been assigned to ' . $delivery->tracking_id
-                . ' and is on the way to pick it up.',
+                body: 'A rider has been assigned to '.$delivery->tracking_id
+                .' and is on the way to pick it up.',
                 data: $this->deliveryPayload($delivery),
             );
         }
@@ -218,8 +222,8 @@ class NotificationService
             $delivery,
             NotificationType::DeliveryAccepted,
             'Your rider accepted the delivery',
-            'The rider for ' . $delivery->tracking_id . ' has accepted and will '
-            . 'pick up the package shortly.',
+            'The rider for '.$delivery->tracking_id.' has accepted and will '
+            .'pick up the package shortly.',
         );
     }
 
@@ -229,8 +233,8 @@ class NotificationService
             $delivery,
             NotificationType::DeliveryPickedUp,
             'Package picked up',
-            'Your package ' . $delivery->tracking_id . ' has been picked up '
-            . 'and is en route.',
+            'Your package '.$delivery->tracking_id.' has been picked up '
+            .'and is en route.',
         );
     }
 
@@ -240,8 +244,8 @@ class NotificationService
             $delivery,
             NotificationType::DeliveryDispatched,
             'Package dispatched',
-            'Your regional package ' . $delivery->tracking_id
-            . ' has been dispatched on the bus / cargo carrier.',
+            'Your regional package '.$delivery->tracking_id
+            .' has been dispatched on the bus / cargo carrier.',
         );
     }
 
@@ -251,28 +255,29 @@ class NotificationService
             $delivery,
             NotificationType::DeliveryDelivered,
             'Package delivered',
-            'Your package ' . $delivery->tracking_id . ' has been delivered. '
-            . 'Thank you for using ODS.',
+            'Your package '.$delivery->tracking_id.' has been delivered. '
+            .'Thank you for using ODS.',
         );
     }
 
     public function packageReady(Delivery $delivery): void
     {
-        if ($delivery->pickup_branch_id === null)
+        if ($delivery->pickup_branch_id === null) {
             return;
+        }
 
         $receivers = User::query()
             ->where('branch_id', $delivery->pickup_branch_id)
             ->where('status', User::STATUS_ACTIVE)
-            ->whereHas('role', fn($q) => $q->where('name', Role::RECEIVER))
+            ->whereHas('role', fn ($q) => $q->where('name', Role::RECEIVER))
             ->get();
 
         $this->notifyMany(
             users: $receivers,
             type: NotificationType::PackageReady,
             title: 'Package ready for handover',
-            body: $delivery->tracking_id . ' is at the branch and waiting '
-            . 'for a rider to pick it up.',
+            body: $delivery->tracking_id.' is at the branch and waiting '
+            .'for a rider to pick it up.',
             data: $this->deliveryPayload($delivery),
         );
     }
@@ -283,13 +288,14 @@ class NotificationService
         string $rawRecipientCode,
     ): void {
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null)
+        if ($distributor === null) {
             return;
+        }
 
         $smsBody = sprintf(
             'ODS codes for %s: DISTRIBUTOR=%s RECIPIENT=%s. Share the '
-            . 'DISTRIBUTOR code at pickup and the RECIPIENT code at '
-            . 'delivery handover.',
+            .'DISTRIBUTOR code at pickup and the RECIPIENT code at '
+            .'delivery handover.',
             $delivery->tracking_id,
             $rawDistributorCode,
             $rawRecipientCode,
@@ -299,9 +305,9 @@ class NotificationService
             user: $distributor,
             type: NotificationType::CodeIssued,
             title: 'Verification codes issued',
-            body: 'Codes for ' . $delivery->tracking_id . ' have been '
-            . 'generated. Check your SMS for the codes, or open the '
-            . 'delivery detail to view them.',
+            body: 'Codes for '.$delivery->tracking_id.' have been '
+            .'generated. Check your SMS for the codes, or open the '
+            .'delivery detail to view them.',
             data: array_merge($this->deliveryPayload($delivery), [
                 'sms_message' => $smsBody,
             ]),
@@ -313,7 +319,7 @@ class NotificationService
     {
         $owners = User::query()
             ->where('status', User::STATUS_ACTIVE)
-            ->whereHas('role', fn($q) => $q->where('name', Role::OWNER))
+            ->whereHas('role', fn ($q) => $q->where('name', Role::OWNER))
             ->get();
 
         if ($owners->isEmpty()) {
@@ -325,15 +331,12 @@ class NotificationService
         $this->notifyMany(
             users: $owners,
             type: NotificationType::DisputeOpened,
-            title: 'New dispute: ' . $dispute->subject,
-            body: 'A ' . $dispute->priority . '-priority '
-            . $dispute->category . ' dispute was opened by '
-            . $openerName . '.',
+            title: 'New dispute: '.$dispute->subject,
+            body: 'A '.$dispute->priority.'-priority '
+            .$dispute->category.' dispute was opened by '
+            .$openerName.'.',
             data: $this->disputePayload($dispute),
-            // in_app only — Owners check the dashboard regularly;
-            // per-dispute SMS would add up fast with no real
-            // time pressure on dispute triage.
-            channels: ['in_app'],
+            channels: ['in_app', 'sms'],
         );
     }
 
@@ -345,25 +348,28 @@ class NotificationService
 
         $targets = [];
         $opener = User::find($dispute->opened_by);
-        if ($opener !== null)
+        if ($opener !== null) {
             $targets[] = $opener;
+        }
 
         // If the dispute named a specific user, they should know too.
         if ($dispute->against_user_id !== null) {
             $against = User::find($dispute->against_user_id);
-            if ($against !== null)
+            if ($against !== null) {
                 $targets[] = $against;
+            }
         }
 
-        if (empty($targets))
+        if (empty($targets)) {
             return;
+        }
 
         $this->notifyMany(
             users: $targets,
             type: NotificationType::DisputeResolved,
-            title: 'Dispute ' . $statusLabel,
-            body: 'Your ' . $dispute->category . ' dispute "'
-            . $dispute->subject . '" was ' . $statusLabel . '.',
+            title: 'Dispute '.$statusLabel,
+            body: 'Your '.$dispute->category.' dispute "'
+            .$dispute->subject.'" was '.$statusLabel.'.',
             data: $this->disputePayload($dispute),
             channels: ['in_app', 'sms'],
         );
@@ -380,8 +386,9 @@ class NotificationService
         ?string $body,
     ): void {
         $distributor = User::find($delivery->distributor_id);
-        if ($distributor === null)
+        if ($distributor === null) {
             return;
+        }
 
         $this->notify(
             user: $distributor,
@@ -394,8 +401,9 @@ class NotificationService
 
     private function hasRecent(int $userId, NotificationType $type, ?int $deliveryId): bool
     {
-        if ($deliveryId === null)
+        if ($deliveryId === null) {
             return false;
+        }
 
         return Notification::query()
             ->where('user_id', $userId)
@@ -415,15 +423,15 @@ class NotificationService
         ];
     }
 
-        private function disputePayload(Dispute $dispute): array
+    private function disputePayload(Dispute $dispute): array
     {
         return [
-            'dispute_id'  => $dispute->id,
+            'dispute_id' => $dispute->id,
             'delivery_id' => $dispute->delivery_id,
             'tracking_id' => $dispute->delivery?->tracking_id,
-            'category'    => $dispute->category,
-            'status'      => $dispute->status,
-            'action'      => 'open_dispute',
+            'category' => $dispute->category,
+            'status' => $dispute->status,
+            'action' => 'open_dispute',
         ];
     }
 }

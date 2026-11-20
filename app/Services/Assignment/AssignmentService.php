@@ -24,8 +24,9 @@ use Illuminate\Support\Facades\Log;
  *   - On timeout (Phase 10.3) or completion, rider rejoins back of queue
  *
  * Receive deliveries are assigned to riders at their pickup branch. Send
- * deliveries go to riders at the nearest active branch to their pickup,
- * within the configured pickup radius. Regional stays manual.
+ * deliveries with a selected pickup branch use that branch; location pickups
+ * go to the nearest active branch within the configured pickup radius.
+ * Regional stays manual.
  *
  * Concurrency: the riders query is wrapped in `lockForUpdate()` inside
  * the same transaction that writes both the delivery and the rider's
@@ -62,7 +63,13 @@ class AssignmentService
                 $query->where(function ($query) use ($branchId): void {
                     $query->where('service_type', Delivery::SERVICE_RECEIVE)
                         ->where('pickup_branch_id', $branchId);
-                })->orWhere('service_type', Delivery::SERVICE_SEND);
+                })->orWhere(function ($query) use ($branchId): void {
+                    $query->where('service_type', Delivery::SERVICE_SEND)
+                        ->where(function ($query) use ($branchId): void {
+                            $query->whereNull('pickup_branch_id')
+                                ->orWhere('pickup_branch_id', $branchId);
+                        });
+                });
             });
         }
 
@@ -94,9 +101,13 @@ class AssignmentService
         $skipped = 0;
 
         foreach ($deliveries as $delivery) {
-            $deliveryBranchId = $delivery->service_type === Delivery::SERVICE_RECEIVE
-                ? $delivery->pickup_branch_id
-                : $this->nearestPickupBranchId($delivery, $branches, $pickupRadiusKm);
+            $deliveryBranchId = $delivery->pickup_branch_id !== null
+                ? ($branches->contains('id', (int) $delivery->pickup_branch_id)
+                    ? (int) $delivery->pickup_branch_id
+                    : null)
+                : ($delivery->service_type === Delivery::SERVICE_SEND
+                    ? $this->nearestPickupBranchId($delivery, $branches, $pickupRadiusKm)
+                    : null);
 
             if ($deliveryBranchId === null) {
                 $skipped++;

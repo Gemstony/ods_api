@@ -3,7 +3,6 @@
 namespace App\Console\Commands;
 
 use App\Models\Notification;
-use App\Models\NotificationSmsLog;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Services\Sms\BeemSmsClient;
@@ -47,6 +46,7 @@ class ReconcileSmsDeliveryReports extends Command
 
         if ($candidates->isEmpty()) {
             $this->info('No SMS notifications to reconcile.');
+
             return self::SUCCESS;
         }
 
@@ -66,7 +66,9 @@ class ReconcileSmsDeliveryReports extends Command
             }
 
             $destAddr = $this->normalizePhone((string) $phone);
-            if ($destAddr === null) continue;
+            if ($destAddr === null) {
+                continue;
+            }
 
             try {
                 $report = $client->deliveryReport(
@@ -81,18 +83,24 @@ class ReconcileSmsDeliveryReports extends Command
                     $notification->id,
                     $e->getMessage(),
                 ));
+
                 continue;
             }
 
             $checked++;
             $status = $report['status'];
-            if ($status === 'DELIVERED') $delivered++;
-            if ($status === 'UNDELIVERED') $undelivered++;
+            if ($status === 'DELIVERED') {
+                $delivered++;
+            }
+            if ($status === 'UNDELIVERED') {
+                $undelivered++;
+            }
 
             $notification->update([
                 'data' => array_merge($data, [
-                    'sms_status'          => $status,
-                    'sms_status_checked'  => now()->toIso8601String(),
+                    'sms_status' => $status,
+                    'sms_status_checked' => now()->toIso8601String(),
+                    'sms_delivery_report_response' => $report['raw'],
                 ]),
             ]);
         }
@@ -126,12 +134,15 @@ class ReconcileSmsDeliveryReports extends Command
     private function normalizePhone(string $raw): ?string
     {
         $t = preg_replace('/\s+/', '', $raw);
-        if ($t === null) return null;
+        if ($t === null) {
+            return null;
+        }
         if (str_starts_with($t, '+255') && strlen($t) === 13) {
             $t = substr($t, 1);
         } elseif (str_starts_with($t, '0') && strlen($t) === 10) {
-            $t = '255' . substr($t, 1);
+            $t = '255'.substr($t, 1);
         }
+
         return preg_match('/^255\d{9}$/', $t) === 1 ? $t : null;
     }
 }

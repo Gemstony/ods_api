@@ -59,9 +59,11 @@ class StoreDeliveryRequest extends FormRequest
         }
 
         if ($serviceType === 'send') {
-            $rules['pickup_address'] = ['required', 'string', 'max:500'];
-            $rules['pickup_latitude'] = ['required', 'numeric', 'between:-90,90'];
-            $rules['pickup_longitude'] = ['required', 'numeric', 'between:-180,180'];
+            $usesBranch = $this->filled('pickup_branch_id');
+            $rules['pickup_branch_id'] = ['nullable', 'integer', 'exists:branches,id'];
+            $rules['pickup_address'] = [$usesBranch ? 'nullable' : 'required', 'string', 'max:500'];
+            $rules['pickup_latitude'] = [$usesBranch ? 'nullable' : 'required', 'numeric', 'between:-90,90'];
+            $rules['pickup_longitude'] = [$usesBranch ? 'nullable' : 'required', 'numeric', 'between:-180,180'];
             $rules['pickup_contact_phone'] = ['nullable', 'string', 'max:20'];
         }
 
@@ -122,6 +124,7 @@ class StoreDeliveryRequest extends FormRequest
             'items.max' => 'You can add at most 20 items per delivery.',
             'pickup_branch_id.required' => 'Select the pickup branch.',
             'pickup_address.required' => 'Pickup address is required.',
+            'pickup_branch_id.exists' => 'The selected pickup branch does not exist.',
             'destination_address.required' => 'Delivery address is required.',
             'destination_latitude.required' => 'Destination location is required.',
             'destination_longitude.required' => 'Destination location is required.',

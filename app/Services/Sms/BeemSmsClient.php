@@ -53,14 +53,14 @@ class BeemSmsClient
 
         $correlationId ??= (string) Str::uuid();
         $payload = [
-            'source_addr'   => $this->senderId,
-            'encoding'      => 0,
+            'source_addr' => $this->senderId,
+            'encoding' => 0,
             'schedule_time' => '',
-            'message'       => $message,
-            'recipients'    => [
+            'message' => $message,
+            'recipients' => [
                 [
                     'recipient_id' => '1',
-                    'dest_addr'    => $destAddr,
+                    'dest_addr' => $destAddr,
                 ],
             ],
         ];
@@ -70,11 +70,11 @@ class BeemSmsClient
             path: '/v1/send',
             headers: [
                 'Authorization' => $this->basicAuth(),
-                'Content-Type'  => 'application/json',
-                'Accept'        => 'application/json',
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
             ],
             body: $payload,
-            fullUrl: $this->v1Base() . '/send',
+            fullUrl: $this->v1Base().'/send',
             correlationId: $correlationId,
             notificationId: $notificationId,
             triggeredBy: $triggeredBy,
@@ -87,7 +87,7 @@ class BeemSmsClient
         if ($code !== 100) {
             $msg = $body['message'] ?? "Beem code {$code}";
             throw new BeemSmsException(
-                message: 'Beem rejected SMS: ' . $msg,
+                message: 'Beem rejected SMS: '.$msg,
                 beemCode: $code,
                 httpStatus: $response['http_status'],
                 responseBody: $body,
@@ -98,8 +98,9 @@ class BeemSmsClient
 
         return [
             'beem_request_id' => $requestId,
-            'beem_code'       => $code,
-            'response'        => $body,
+            'beem_code' => $code,
+            'response' => $body,
+            'log_id' => $response['log_id'],
         ];
     }
 
@@ -117,9 +118,9 @@ class BeemSmsClient
         $this->assertCredentialsConfigured();
 
         $correlationId ??= (string) Str::uuid();
-        $url = self::DELIVERY_REPORT_BASE . '/delivery-reports'
-            . '?' . http_build_query([
-                'dest_addr'  => $destAddr,
+        $url = self::DELIVERY_REPORT_BASE.'/delivery-reports'
+            .'?'.http_build_query([
+                'dest_addr' => $destAddr,
                 'request_id' => $beemRequestId,
             ]);
 
@@ -129,7 +130,7 @@ class BeemSmsClient
                 path: '/public/v1/delivery-reports',
                 headers: [
                     'Authorization' => $this->basicAuth(),
-                    'Accept'        => 'application/json',
+                    'Accept' => 'application/json',
                 ],
                 body: null,
                 fullUrl: $url,
@@ -167,7 +168,8 @@ class BeemSmsClient
     private function v1Base(): string
     {
         $base = rtrim($this->baseUrl, '/');
-        return str_ends_with($base, '/v1') ? $base : $base . '/v1';
+
+        return str_ends_with($base, '/v1') ? $base : $base.'/v1';
     }
 
     private function httpCall(
@@ -197,14 +199,14 @@ class BeemSmsClient
                 ? $request->get($fullUrl)
                 : $request->post($fullUrl, $body ?? []);
         } catch (ConnectionException $e) {
-            $errorMessage = 'Connection error: ' . $e->getMessage();
+            $errorMessage = 'Connection error: '.$e->getMessage();
             $thrown = new BeemSmsException(
                 message: $errorMessage,
                 endpoint: $path,
                 previous: $e,
             );
         } catch (Throwable $e) {
-            $errorMessage = 'Unexpected HTTP error: ' . $e->getMessage();
+            $errorMessage = 'Unexpected HTTP error: '.$e->getMessage();
             $thrown = new BeemSmsException(
                 message: $errorMessage,
                 endpoint: $path,
@@ -281,9 +283,15 @@ class BeemSmsClient
             );
         }
 
-        if ($beemCode !== null && $beemCode !== 100) {
+        if (strtoupper($method) === 'POST'
+            && ($beemCode !== 100 || ($bodyArray['successful'] ?? true) === false)) {
+            $message = $beemMessage
+                ?? ($beemCode === null
+                    ? 'Beem response did not include a success code.'
+                    : "Beem code {$beemCode}");
+
             throw new BeemSmsException(
-                message: $beemMessage ?? "Beem code {$beemCode}",
+                message: $message,
                 beemCode: $beemCode,
                 httpStatus: $response->status(),
                 responseBody: is_array($bodyArray) ? $bodyArray : null,
@@ -293,10 +301,10 @@ class BeemSmsClient
         }
 
         return [
-            'body'        => is_array($bodyArray) ? $bodyArray : [],
-            'beem_code'   => $beemCode ?? 100,
+            'body' => is_array($bodyArray) ? $bodyArray : [],
+            'beem_code' => $beemCode ?? 100,
             'http_status' => $response->status(),
-            'log_id'      => $log->id,
+            'log_id' => $log->id,
         ];
     }
 
@@ -319,22 +327,22 @@ class BeemSmsClient
         string $triggeredBy,
     ): NotificationSmsLog {
         return NotificationSmsLog::create([
-            'correlation_id'   => $correlationId,
-            'method'           => $method,
-            'endpoint'         => $path,
-            'full_url'         => $fullUrl,
-            'request_headers'  => $this->redactHeaders($headers),
-            'request_body'     => $this->redactBody($body),
-            'response_status'  => $responseStatus,
-            'response_body'    => $responseBody,
+            'correlation_id' => $correlationId,
+            'method' => $method,
+            'endpoint' => $path,
+            'full_url' => $fullUrl,
+            'request_headers' => $this->redactHeaders($headers),
+            'request_body' => $this->redactBody($body),
+            'response_status' => $responseStatus,
+            'response_body' => $responseBody,
             'response_headers' => $responseHeaders,
-            'error_message'    => $errorMessage,
-            'duration_ms'      => $durationMs,
-            'beem_code'        => $beemCode,
-            'beem_message'     => $beemMessage,
-            'beem_request_id'  => $beemRequestId,
-            'notification_id'  => $notificationId,
-            'triggered_by'     => $triggeredBy,
+            'error_message' => $errorMessage,
+            'duration_ms' => $durationMs,
+            'beem_code' => $beemCode,
+            'beem_message' => $beemMessage,
+            'beem_request_id' => $beemRequestId,
+            'notification_id' => $notificationId,
+            'triggered_by' => $triggeredBy,
         ]);
     }
 
@@ -348,6 +356,7 @@ class BeemSmsClient
                 $out[$key] = $value;
             }
         }
+
         return $out;
     }
 
@@ -364,6 +373,7 @@ class BeemSmsClient
                 }
             }
         }
+
         return $out;
     }
 
@@ -372,12 +382,13 @@ class BeemSmsClient
         if (strlen($phone) < 6) {
             return '***';
         }
-        return substr($phone, 0, 3) . '***' . substr($phone, -3);
+
+        return substr($phone, 0, 3).'***'.substr($phone, -3);
     }
 
     private function basicAuth(): string
     {
-        return 'Basic ' . base64_encode($this->apiKey . ':' . $this->secretKey);
+        return 'Basic '.base64_encode($this->apiKey.':'.$this->secretKey);
     }
 
     private function assertCredentialsConfigured(): void
@@ -394,7 +405,7 @@ class BeemSmsClient
         if ($this->senderId === '' || $this->senderId === 'INFO') {
             throw new BeemSmsException(
                 'Beem sender ID is not usable. The default INFO sender is deactivated; '
-                . 'register an approved Sender ID in the Beem dashboard and set BEEM_SENDER_ID.'
+                .'register an approved Sender ID in the Beem dashboard and set BEEM_SENDER_ID.'
             );
         }
     }

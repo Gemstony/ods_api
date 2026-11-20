@@ -47,8 +47,10 @@ class PricePreviewRequest extends FormRequest
         }
 
         if ($serviceType === 'send') {
-            $rules['pickup_latitude'] = ['required', 'numeric', 'between:-90,90'];
-            $rules['pickup_longitude'] = ['required', 'numeric', 'between:-180,180'];
+            $usesBranch = $this->filled('pickup_branch_id');
+            $rules['pickup_branch_id'] = ['nullable', 'integer', 'exists:branches,id'];
+            $rules['pickup_latitude'] = [$usesBranch ? 'nullable' : 'required', 'numeric', 'between:-90,90'];
+            $rules['pickup_longitude'] = [$usesBranch ? 'nullable' : 'required', 'numeric', 'between:-180,180'];
         }
 
         if (in_array($serviceType, ['receive', 'send'], true)) {
@@ -68,6 +70,7 @@ class PricePreviewRequest extends FormRequest
         return [
             'service_type.in' => 'Service type must be receive, send, or regional.',
             'pickup_branch_id.required' => 'Select the pickup branch.',
+            'pickup_branch_id.exists' => 'The selected pickup branch does not exist.',
             'pickup_branch_id.exists' => 'The selected branch does not exist.',
             'pickup_latitude.required' => 'Pickup location is required.',
             'destination_latitude.required' => 'Destination location is required.',
