@@ -194,6 +194,7 @@ class RegionalDispatcherController extends Controller
 
             return [$ticket, $old];
         });
+        $model->setRelation('dispatcherTicket', $ticket);
 
         $this->auditLogger->logCurrentUser(
             action: 'delivery.dispatched',

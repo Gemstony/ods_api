@@ -247,6 +247,8 @@ class NotificationService
             'Your regional package '.$delivery->tracking_id
             .' has been dispatched on the bus / cargo carrier.',
         );
+
+        $this->notifyRegionalRecipient($delivery, false);
     }
 
     public function deliveryDelivered(Delivery $delivery): void
@@ -258,6 +260,8 @@ class NotificationService
             'Your package '.$delivery->tracking_id.' has been delivered. '
             .'Thank you for using ODS.',
         );
+
+        $this->notifyRegionalRecipient($delivery, true);
     }
 
     public function packageReady(Delivery $delivery): void
@@ -396,6 +400,42 @@ class NotificationService
             title: $title,
             body: $body,
             data: $this->deliveryPayload($delivery),
+        );
+    }
+
+    private function notifyRegionalRecipient(Delivery $delivery, bool $arrived): void
+    {
+        if (!$delivery->isRegional() || empty($delivery->recipient_phone)) {
+            return;
+        }
+
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) {
+            return;
+        }
+
+        $ticket = $delivery->dispatcherTicket;
+        $busName = $ticket?->provider_name ?: 'the bus carrier';
+        $amount = (float) ($ticket?->transport_fare ?? $delivery->bus_cargo_fare ?? 0);
+        $amountLabel = ($ticket?->currency ?? $delivery->currency ?? 'TZS')
+            .' '.number_format($amount, 0);
+        $recipientName = $delivery->recipient_name ?: 'Recipient';
+        $message = $arrived
+            ? "Hello {$recipientName}, package {$delivery->tracking_id} has arrived at its destination. Please contact the sender or ODS to collect it."
+            : "Hello {$recipientName}, package {$delivery->tracking_id} has been sent via {$busName}. Amount paid: {$amountLabel}.";
+
+        $this->notify(
+            user: $distributor,
+            type: $arrived
+                ? NotificationType::RecipientDeliveryArrived
+                : NotificationType::RecipientDeliveryDispatched,
+            title: $arrived ? 'Recipient arrival SMS' : 'Recipient dispatch SMS',
+            body: $message,
+            data: array_merge($this->deliveryPayload($delivery), [
+                'sms_message' => $message,
+                'sms_destination' => $delivery->recipient_phone,
+            ]),
+            channels: ['sms'],
         );
     }
 

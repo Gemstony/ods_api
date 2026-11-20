@@ -75,7 +75,8 @@ class SmsDispatcher
         foreach ($pending as $notification) {
             /** @var Notification $notification */
             $user = User::find($notification->user_id);
-            if ($user === null || $user->phone === null || $user->phone === '') {
+            $rawDestination = $notification->data['sms_destination'] ?? $user?->phone;
+            if ($rawDestination === null || $rawDestination === '') {
                 if (! $dryRun) {
                     $this->markFailed($notification, 'User has no usable phone number.');
                 }
@@ -84,7 +85,7 @@ class SmsDispatcher
                 continue;
             }
 
-            $destAddr = $this->normalizePhone((string) $user->phone);
+            $destAddr = $this->normalizePhone((string) $rawDestination);
             if ($destAddr === null) {
                 if (! $dryRun) {
                     $this->markFailed($notification, 'Phone number is not in valid 255XXXXXXXXX format.');
