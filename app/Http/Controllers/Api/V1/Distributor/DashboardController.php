@@ -83,7 +83,7 @@ class DashboardController extends Controller
 
         // ─── Recent deliveries (last 3) ──────────────────────
         $recent = (clone $baseQuery)
-            ->with(['items'])
+            ->with(['items', 'pendingManualPayment'])
             ->orderByDesc('created_at')
             ->limit(3)
             ->get();

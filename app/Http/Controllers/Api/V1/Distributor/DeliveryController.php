@@ -51,7 +51,7 @@ class DeliveryController extends Controller
     {
         $distributorId = $request->user()->id;
 
-        $query = Delivery::with(['items'])
+        $query = Delivery::with(['items', 'pendingManualPayment'])
             ->where('distributor_id', $distributorId)
             ->orderByDesc('created_at');
 
@@ -121,7 +121,7 @@ class DeliveryController extends Controller
     // ─── show ─────────────────────────────────────────────────
     public function show(Request $request, int $delivery): JsonResponse
     {
-        $model = Delivery::with(['items'])
+        $model = Delivery::with(['items', 'pendingManualPayment'])
             ->where('distributor_id', $request->user()->id)
             ->where('id', $delivery)
             ->first();

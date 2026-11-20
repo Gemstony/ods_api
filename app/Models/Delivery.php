@@ -134,6 +134,13 @@ class Delivery extends Model
         return $this->hasMany(DeliveryItem::class)->orderBy('sort_order');
     }
 
+    public function pendingManualPayment(): HasOne
+    {
+        return $this->hasOne(Payment::class)
+            ->where('status', Payment::STATUS_PENDING)
+            ->whereIn('method', ['cash', 'manual']);
+    }
+
     public function verificationCodes(): HasMany
     {
         return $this->hasMany(VerificationCode::class);

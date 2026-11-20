@@ -107,6 +107,10 @@ class DeliveryResource extends JsonResource
             'items' => $this->whenLoaded('items', function () {
                 return DeliveryItemResource::collection($this->items);
             }),
+            'manual_payment_pending' => $this->whenLoaded(
+                'pendingManualPayment',
+                fn () => $this->pendingManualPayment !== null,
+            ),
 
             // Phase 9.1 — dispatched regional deliveries carry their ticket.
             'dispatcher_ticket' => $this->whenLoaded('dispatcherTicket', function () {
