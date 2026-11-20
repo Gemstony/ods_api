@@ -13,6 +13,8 @@ enum NotificationType: string
     case DeliveryDelivered       = 'delivery.delivered';
     case RecipientDeliveryDispatched = 'delivery.recipient_dispatched';
     case RecipientDeliveryArrived = 'delivery.recipient_arrived';
+    case RecipientDeliveryOnRoute = 'delivery.recipient_on_route';
+    case RecipientDeliveryCompleted = 'delivery.recipient_completed';
     case PackageReady            = 'package.ready';
     case CodeIssued              = 'code.issued';
     case DisputeOpened           = 'dispute.opened';

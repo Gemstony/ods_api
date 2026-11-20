@@ -236,6 +236,10 @@ class NotificationService
             'Your package '.$delivery->tracking_id.' has been picked up '
             .'and is en route.',
         );
+
+        if ($delivery->isSend()) {
+            $this->notifySendRecipient($delivery, false);
+        }
     }
 
     public function deliveryDispatched(Delivery $delivery): void
@@ -262,6 +266,9 @@ class NotificationService
         );
 
         $this->notifyRegionalRecipient($delivery, true);
+        if ($delivery->isSend()) {
+            $this->notifySendRecipient($delivery, true);
+        }
     }
 
     public function packageReady(Delivery $delivery): void
@@ -430,6 +437,37 @@ class NotificationService
                 ? NotificationType::RecipientDeliveryArrived
                 : NotificationType::RecipientDeliveryDispatched,
             title: $arrived ? 'Recipient arrival SMS' : 'Recipient dispatch SMS',
+            body: $message,
+            data: array_merge($this->deliveryPayload($delivery), [
+                'sms_message' => $message,
+                'sms_destination' => $delivery->recipient_phone,
+            ]),
+            channels: ['sms'],
+        );
+    }
+
+    private function notifySendRecipient(Delivery $delivery, bool $delivered): void
+    {
+        if (!$delivery->isSend() || empty($delivery->recipient_phone)) {
+            return;
+        }
+
+        $distributor = User::find($delivery->distributor_id);
+        if ($distributor === null) {
+            return;
+        }
+
+        $recipientName = $delivery->recipient_name ?: 'Recipient';
+        $message = $delivered
+            ? "Hello {$recipientName}, package {$delivery->tracking_id} has been delivered. Thank you."
+            : "Hello {$recipientName}, package {$delivery->tracking_id} is now on the way to you.";
+
+        $this->notify(
+            user: $distributor,
+            type: $delivered
+                ? NotificationType::RecipientDeliveryCompleted
+                : NotificationType::RecipientDeliveryOnRoute,
+            title: $delivered ? 'Recipient delivery confirmation SMS' : 'Recipient on-route SMS',
             body: $message,
             data: array_merge($this->deliveryPayload($delivery), [
                 'sms_message' => $message,
