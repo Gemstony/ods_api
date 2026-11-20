@@ -3,11 +3,15 @@
 namespace App\Http\Controllers\Api\V1\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Auth\ChangePasswordRequest;
 use App\Http\Requests\Api\V1\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Auth\LogoutRequest;
 use App\Http\Requests\Api\V1\Auth\RefreshTokenRequest;
+use App\Http\Requests\Api\V1\Auth\RegisterDistributorRequest;
+use App\Http\Requests\Api\V1\Auth\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\AuditLog;
+use App\Models\Role;
 use App\Models\User;
 use App\Services\Auth\RefreshTokenService;
 use App\Traits\ApiResponse;
@@ -16,8 +20,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Throwable;
 use Tymon\JWTAuth\Facades\JWTAuth;
-use App\Http\Requests\Api\V1\Auth\RegisterDistributorRequest;
-use App\Models\Role;
 
 /**
  * Authentication endpoints.
@@ -36,8 +38,7 @@ class AuthController extends Controller
 
     public function __construct(
         private readonly RefreshTokenService $refreshTokens,
-    ) {
-    }
+    ) {}
 
     // ─────────────────────────────────────────────────────────
     // LOGIN
@@ -50,18 +51,19 @@ class AuthController extends Controller
             ->first();
 
         // ─── Password check (generic failure message, no info leak) ─
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (! $user || ! Hash::check($request->password, $user->password)) {
             return $this->error('Invalid email or password.', null, 401);
         }
 
         // ─── Status gate ─────────────────────────────────────────
-        if (!$user->isActive()) {
+        if (! $user->isActive()) {
             $message = match ($user->status) {
                 User::STATUS_PENDING => 'Your account is pending approval. Please wait for the administrator.',
                 User::STATUS_SUSPENDED => 'Your account has been suspended. Contact the administrator.',
                 User::STATUS_DEACTIVATED => 'Your account has been deactivated.',
                 default => 'Your account is not active.',
             };
+
             return $this->error($message, null, 403);
         }
 
@@ -95,16 +97,17 @@ class AuthController extends Controller
     {
         $stored = $this->refreshTokens->find($request->refresh_token);
 
-        if (!$stored || !$stored->isUsable()) {
+        if (! $stored || ! $stored->isUsable()) {
             return $this->error('Invalid or expired refresh token.', null, 401);
         }
 
         $user = $stored->user()->with('role.permissions')->first();
 
-        if (!$user || !$user->isActive()) {
+        if (! $user || ! $user->isActive()) {
             // Revoke the token even if the user is inactive — no point in
             // keeping it around for the next attempt.
             $this->refreshTokens->revoke($stored);
+
             return $this->error(
                 'Your account is not active. Please contact the administrator.',
                 null,
@@ -176,7 +179,91 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         $user = $request->user()->load('role.permissions', 'branch');
+
         return $this->success(new UserResource($user), 'OK');
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // UPDATE PROFILE (self-service, any role)
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Updates the signed-in user's editable fields (name, phone).
+     *
+     * Email is immutable here — see UpdateProfileRequest for why.
+     * Available to every authenticated role; the `users` table is shared.
+     */
+    public function updateProfile(UpdateProfileRequest $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $changes = [];
+        foreach (['name', 'phone'] as $field) {
+            $new = $request->input($field);
+            if ($user->{$field} !== $new) {
+                $changes[$field] = ['from' => $user->{$field}, 'to' => $new];
+            }
+        }
+
+        $user->update($request->safe()->only(['name', 'phone']));
+        $user->load('role.permissions', 'branch');
+
+        if ($changes !== []) {
+            AuditLog::record(
+                actor: $user,
+                action: 'profile.updated',
+                description: 'Profile updated: '.implode(', ', array_keys($changes)),
+                subject: $user,
+                changes: $changes,
+                ipAddress: $request->ip(),
+                userAgent: $request->userAgent(),
+            );
+        }
+
+        return $this->success(
+            new UserResource($user),
+            'Profile updated successfully.',
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // CHANGE PASSWORD (self-service, any role)
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Changes the signed-in user's password after verifying the current
+     * one. The current session stays valid — the caller keeps using its
+     * existing tokens. Other devices' refresh tokens are left alone;
+     * they expire naturally (use /auth/logout-all to revoke them).
+     */
+    public function changePassword(ChangePasswordRequest $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (! Hash::check($request->current_password, $user->password)) {
+            return $this->error(
+                'The current password you entered is incorrect.',
+                ['current_password' => ['The current password is incorrect.']],
+                422,
+            );
+        }
+
+        $user->update(['password' => $request->password]); // auto-hashed via cast
+
+        AuditLog::record(
+            actor: $user,
+            action: 'auth.password_changed',
+            description: 'Password changed',
+            subject: $user,
+            ipAddress: $request->ip(),
+            userAgent: $request->userAgent(),
+        );
+
+        // Best-effort invalidation of the access token — the client's
+        // refresh interceptor will transparently rotate to a new one.
+        $this->invalidateCurrentAccessToken();
+
+        return $this->success(null, 'Password changed successfully.');
     }
 
     // ─────────────────────────────────────────────────────────
@@ -187,7 +274,7 @@ class AuthController extends Controller
         RegisterDistributorRequest $request,
     ): JsonResponse {
         $distributorRole = Role::where('name', Role::DISTRIBUTOR)->first();
-        if (!$distributorRole) {
+        if (! $distributorRole) {
             // Seeder should have created this; if it didn't, the deployment
             // is broken. Surface a server error rather than creating a user
             // with no role.
@@ -229,7 +316,7 @@ class AuthController extends Controller
         return $this->success(
             data: new UserResource($user),
             message: 'Registration successful. Your account is pending approval. '
-            . 'You will be notified once an administrator approves it.',
+            .'You will be notified once an administrator approves it.',
             status: 201,
         );
     }
