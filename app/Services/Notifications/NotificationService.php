@@ -35,6 +35,7 @@ class NotificationService
         array $data = [],
         array $channels = ['in_app', 'sms'],
         ?string $priority = null,
+        bool $sendSms = true,
     ): ?Notification {
         try {
             // Dedupe terminal events within a 5-minute window.
@@ -43,11 +44,14 @@ class NotificationService
                 return null;
             }
 
-            // All user-facing notifications are sent in-app and by SMS.
-            // Keeping this policy here prevents an event helper from
-            // accidentally marking an unsent SMS as sent by omitting its
-            // channels argument.
-            $channels = array_values(array_unique([...$channels, 'in_app', 'sms']));
+            // In-app is always included. SMS is included by default, but
+            // assignment notifications can opt out to avoid charging for
+            // repeated rider reassignments.
+            $channels = array_values(array_unique([
+                ...$channels,
+                'in_app',
+                ...($sendSms ? ['sms'] : []),
+            ]));
 
             $notification = Notification::send(
                 user: $user,
@@ -110,7 +114,10 @@ class NotificationService
             body: "Your payment of {$amountLabel} for "
             ."{$delivery->tracking_id} was received. The delivery "
             .'is now ready for pickup.',
-            data: $this->deliveryPayload($delivery),
+            data: $this->smsData(
+                $this->deliveryPayload($delivery),
+                "ODS: Payment received for {$delivery->tracking_id}. Your package is ready for pickup.",
+            ),
         );
     }
 
@@ -132,7 +139,10 @@ class NotificationService
             body: 'Payment for '.$delivery->tracking_id
             .' failed: '.($payment->failure_reason ?? 'unknown error')
             .'. Tap to try again.',
-            data: $this->deliveryPayload($delivery),
+            data: $this->smsData(
+                $this->deliveryPayload($delivery),
+                "ODS: Payment for {$delivery->tracking_id} failed. Check the ODS app and try again.",
+            ),
         );
     }
 
@@ -176,14 +186,14 @@ class NotificationService
             title: 'Manual payment awaiting approval',
             body: $amountLabel.' '.$payment->method.' payment recorded '
                 .'for '.$delivery->tracking_id.'.',
-            data: array_merge(
+            data: $this->smsData(array_merge(
                 $this->deliveryPayload($delivery),
                 [
                     'payment_id' => $payment->id,
                     'reference' => $payment->reference,
                     'action' => 'open_manual_payment',
                 ],
-            ),
+            ), "ODS: {$amountLabel} manual payment for {$delivery->tracking_id} needs approval. Review in the ODS app."),
             channels: ['in_app', 'sms'],
         );
     }
@@ -191,7 +201,6 @@ class NotificationService
     public function deliveryAssigned(Delivery $delivery): void
     {
         $rider = $delivery->rider;
-        $distributor = User::find($delivery->distributor_id);
 
         if ($rider !== null) {
             $this->notify(
@@ -200,18 +209,10 @@ class NotificationService
                 title: 'New task: '.$delivery->tracking_id,
                 body: 'A delivery has been assigned to you. '
                 .'Accept it from the Tasks tab.',
-                data: $this->deliveryPayload($delivery),
-            );
-        }
-
-        if ($distributor !== null) {
-            $this->notify(
-                user: $distributor,
-                type: NotificationType::DeliveryAssigned,
-                title: 'Rider assigned',
-                body: 'A rider has been assigned to '.$delivery->tracking_id
-                .' and is on the way to pick it up.',
-                data: $this->deliveryPayload($delivery),
+                data: $this->smsData(
+                    $this->deliveryPayload($delivery),
+                    "ODS: Delivery {$delivery->tracking_id} assigned to you. Open the ODS app and accept it.",
+                ),
             );
         }
     }
@@ -224,6 +225,7 @@ class NotificationService
             'Your rider accepted the delivery',
             'The rider for '.$delivery->tracking_id.' has accepted and will '
             .'pick up the package shortly.',
+            "ODS: Rider accepted delivery {$delivery->tracking_id}. Pickup is next.",
         );
     }
 
@@ -235,6 +237,7 @@ class NotificationService
             'Package picked up',
             'Your package '.$delivery->tracking_id.' has been picked up '
             .'and is en route.',
+            "ODS: Package {$delivery->tracking_id} was picked up and is on the way.",
         );
 
         if ($delivery->isSend()) {
@@ -250,6 +253,7 @@ class NotificationService
             'Package dispatched',
             'Your regional package '.$delivery->tracking_id
             .' has been dispatched on the bus / cargo carrier.',
+            "ODS: Package {$delivery->tracking_id} was sent via its carrier. It is on the way.",
         );
 
         $this->notifyRegionalRecipient($delivery, false);
@@ -263,6 +267,7 @@ class NotificationService
             'Package delivered',
             'Your package '.$delivery->tracking_id.' has been delivered. '
             .'Thank you for using ODS.',
+            "ODS: Delivery {$delivery->tracking_id} is complete. View details in the ODS app.",
         );
 
         $this->notifyRegionalRecipient($delivery, true);
@@ -289,7 +294,10 @@ class NotificationService
             title: 'Package ready for handover',
             body: $delivery->tracking_id.' is at the branch and waiting '
             .'for a rider to pick it up.',
-            data: $this->deliveryPayload($delivery),
+            data: $this->smsData(
+                $this->deliveryPayload($delivery),
+                "ODS: Package {$delivery->tracking_id} is at the branch, ready for rider pickup.",
+            ),
         );
     }
 
@@ -304,9 +312,7 @@ class NotificationService
         }
 
         $smsBody = sprintf(
-            'ODS codes for %s: DISTRIBUTOR=%s RECIPIENT=%s. Share the '
-            .'DISTRIBUTOR code at pickup and the RECIPIENT code at '
-            .'delivery handover.',
+            'ODS: %s pickup code %s; delivery code %s. Use pickup code at collection; give delivery code to recipient at handover.',
             $delivery->tracking_id,
             $rawDistributorCode,
             $rawRecipientCode,
@@ -346,7 +352,10 @@ class NotificationService
             body: 'A '.$dispute->priority.'-priority '
             .$dispute->category.' dispute was opened by '
             .$openerName.'.',
-            data: $this->disputePayload($dispute),
+            data: array_merge($this->disputePayload($dispute), [
+                'sms_message' => 'ODS: New '.$dispute->priority.'-priority dispute received. '
+                    .'Review it in the ODS app.',
+            ]),
             channels: ['in_app', 'sms'],
         );
     }
@@ -381,7 +390,10 @@ class NotificationService
             title: 'Dispute '.$statusLabel,
             body: 'Your '.$dispute->category.' dispute "'
             .$dispute->subject.'" was '.$statusLabel.'.',
-            data: $this->disputePayload($dispute),
+            data: array_merge($this->disputePayload($dispute), [
+                'sms_message' => 'ODS: Your '.$dispute->category.' dispute was '
+                    .$statusLabel.'. View details in the ODS app.',
+            ]),
             channels: ['in_app', 'sms'],
         );
     }
@@ -395,6 +407,7 @@ class NotificationService
         NotificationType $type,
         string $title,
         ?string $body,
+        ?string $smsMessage = null,
     ): void {
         $distributor = User::find($delivery->distributor_id);
         if ($distributor === null) {
@@ -406,7 +419,9 @@ class NotificationService
             type: $type,
             title: $title,
             body: $body,
-            data: $this->deliveryPayload($delivery),
+            data: $smsMessage === null
+                ? $this->deliveryPayload($delivery)
+                : $this->smsData($this->deliveryPayload($delivery), $smsMessage),
         );
     }
 
@@ -421,15 +436,9 @@ class NotificationService
             return;
         }
 
-        $ticket = $delivery->dispatcherTicket;
-        $busName = $ticket?->provider_name ?: 'the bus carrier';
-        $amount = (float) ($ticket?->transport_fare ?? $delivery->bus_cargo_fare ?? 0);
-        $amountLabel = ($ticket?->currency ?? $delivery->currency ?? 'TZS')
-            .' '.number_format($amount, 0);
-        $recipientName = $delivery->recipient_name ?: 'Recipient';
         $message = $arrived
-            ? "Hello {$recipientName}, package {$delivery->tracking_id} has arrived at its destination. Please contact the sender or ODS to collect it."
-            : "Hello {$recipientName}, package {$delivery->tracking_id} has been sent via {$busName}. Amount paid: {$amountLabel}.";
+            ? "ODS: Package {$delivery->tracking_id} arrived. Contact the sender or ODS to arrange collection."
+            : "ODS: Package {$delivery->tracking_id} was sent by cargo and is on the way. We will text you when it arrives.";
 
         $this->notify(
             user: $distributor,
@@ -457,10 +466,9 @@ class NotificationService
             return;
         }
 
-        $recipientName = $delivery->recipient_name ?: 'Recipient';
         $message = $delivered
-            ? "Hello {$recipientName}, package {$delivery->tracking_id} has been delivered. Thank you."
-            : "Hello {$recipientName}, package {$delivery->tracking_id} is now on the way to you.";
+            ? "ODS: Package {$delivery->tracking_id} was delivered. Contact the sender if you need help."
+            : "ODS: Package {$delivery->tracking_id} is on the way to you. Contact the sender for help.";
 
         $this->notify(
             user: $distributor,
@@ -499,6 +507,11 @@ class NotificationService
             'service_type' => $delivery->service_type,
             'action' => 'open_delivery',
         ];
+    }
+
+    private function smsData(array $data, string $message): array
+    {
+        return array_merge($data, ['sms_message' => $message]);
     }
 
     private function disputePayload(Dispute $dispute): array
